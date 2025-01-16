@@ -1,0 +1,18 @@
+
+name: atems
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.10  # or another compatible version
+  - numpy
+  - pytesseract=0.3.13=pyhd8ed1ab_0
+  - matplotlib
+  - scikit-image
+  - scikit-learn
+  - pip
+  - pip:
+    - opencv-python  # cv2
+    - tabulate
+    - yaml
+    - json

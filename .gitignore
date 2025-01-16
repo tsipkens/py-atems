@@ -1,3 +1,11 @@
+# Custom exclusions
+data_local/
+dm3_lib/
+out/
+images/slider
+working/
+main_*
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

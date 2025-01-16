@@ -1,0 +1,9 @@
+{
+    "version": 6.1,
+    "lvl3": "np.linspace(1, 1.35, 100)",
+    "lvl5": 0.1,
+    "lvlfun": "lin",
+    "morphsc": 4,
+    "minsize": 50
+}
+
