@@ -22,6 +22,8 @@ from skimage.color import label2rgb
 
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
+from PIL import Image
+
 from tqdm import tqdm
 
 import json
@@ -74,7 +76,7 @@ def imshow(img, cmap=None, pixsize=None):
     return h
 
 
-def imshow2(imgs, cmap=None, n=None, pixsizes=None):
+def imshow2(imgs:list, cmap=None, n=None, pixsizes=None):
     """
     A wrapper for displaying multiple images using matplotlib.
 
@@ -125,7 +127,7 @@ def imshow2(imgs, cmap=None, n=None, pixsizes=None):
     for ii in range(n_imgs):  # loop over images
         if n_imgs > 1:
             plt.subplot(N1, N2, ii + 1)
-            plt.title(str(ii + 1))
+            plt.title(str(n[ii]))
         imshow(imgs[ii], cmap=cmap)
 
 
@@ -226,12 +228,7 @@ def imshow_binary(img, img_binary, pixsize=None, opts=None):
     plt.axis('off')
 
 
-def imshow_binary2(imgs, imgs_binary, pixsizes=None, *args):
-    # Parse inputs
-    if not isinstance(imgs, list):
-        imgs = [imgs]
-    if not isinstance(imgs_binary, list):
-        imgs_binary = [imgs_binary]
+def imshow_binary2(imgs:list, imgs_binary:list, pixsizes=None, *args):
     
     if len(imgs) > 24:  # only plot up to 24 images
         imgs = imgs[:24]
@@ -262,6 +259,19 @@ def imshow_binary2(imgs, imgs_binary, pixsizes=None, *args):
         plt.show()
     
     f = plt.gcf()  # get the current figure
+
+
+def imshow_beside(img, img_binary, *args):
+    
+    plt.clf()
+    
+    # Plot without overlay.
+    plt.subplot(1, 2, 1)
+    imshow(img)
+
+    # Plot with binary overlay.
+    plt.subplot(1, 2, 2)
+    imshow_binary(img, img_binary, *args)
 
 
 def imshow_agg(Aggs, idx=None, f_img=True, opts=None):
@@ -581,6 +591,18 @@ def pcf(img_binary, v=None, ns=1e5):
     return g, v
 
 
+def enhance_contrast(imgs, contrast:float=1.0, brightness:int=0):
+    """
+    Adjusts contrast and brightness of an uint8 image.
+    contrast:   (0.0,  inf) with 1.0 leaving the contrast as is
+    brightness: [-255, 255] with 0 leaving the brightness as is
+    """
+    brightness += int(round(255 * (1 - contrast) / 2))
+    for ii in range(len(imgs)):
+        imgs[ii] = cv2.addWeighted(imgs[ii], contrast, imgs[ii], 0, brightness)
+    return imgs
+
+
 def loghist(y, n=20):
     x = np.logspace(np.log10(np.min(y)), np.log10(np.max(y)), n)
     dens, _ = np.histogram(y, bins=x)
@@ -591,19 +613,23 @@ def loghist(y, n=20):
     plt.stairs(dens, x)
     plt.xscale('log')
 
-    # Use optimization to find GMD and GSD.
+    print('Adding lognormal fits:')
+
+    # Get first guess for GMD and GSD.
     mu, sg = stats.norm.fit(np.log(y))
-    min_fun = lambda t: np.linalg.norm(stats.norm.pdf(np.log(x[0:-1]), t[0], t[1]) - t[2] * dens) ** 2
+    print(f'y(stats) ~ logn(mu={np.exp(mu)}, sg={np.exp(sg)})')
+
+    # Use optimization to find GMD and GSD.
+    min_fun = lambda t: np.linalg.norm(stats.norm.pdf(np.log(x[0:-1]), t[0], t[1]) - dens) ** 2
     x1 = op.fmin(min_fun, x0=[mu, sg, 1.], disp=None)
     mu = np.exp(x1[0])
     sg = np.exp(x1[1])
-    print(f'y ~ logn(mu={mu}, sg={sg})')
+    print(f'y(fit) ~ logn(mu={mu}, sg={sg})\n\n')
 
     # Add lognormal fit.
-    mu, sg = stats.norm.fit(np.log(y))
     xmin, xmax = plt.xlim()
     x = np.logspace(np.log10(xmin), np.log10(xmax), 100)
-    p = stats.norm.pdf(np.log(x), mu, sg)
+    p = stats.norm.pdf(np.log(x), np.log(mu), np.log(sg))
     plt.plot(x, p, 'k', linewidth=2)
 
     # Return GMD and GSD.
@@ -628,9 +654,13 @@ def load_data(fname):
     return out
 
 
-def write_images(fname, imgs):
+def write_images(fd, imgs):
     """
     Load files using pickle.
     """
-    for img in imgs:
-        i = Image.fromarray(img)
+    if not os.path.exists(fd):
+        os.makedirs(fd)
+
+    for ii in range(len(imgs)):
+        img = Image.fromarray(imgs[ii])
+        img.save(f"{fd}\\{str(ii).zfill(3)}.png")
