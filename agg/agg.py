@@ -6,12 +6,13 @@ from scipy.optimize import curve_fit
 from scipy import ndimage
 
 from skimage import filters, measure, morphology
-from skimage.color import rgb2gray
-from skimage.filters.rank import entropy
-from skimage.segmentation import slic, clear_border
-from skimage.util import img_as_ubyte
+from skimage.segmentation import clear_border
+from skimage.util import img_as_ubyte, invert
 from skimage.draw import polygon
 from skimage import measure, morphology, filters
+from skimage.measure import label, regionprops
+
+from tqdm import tqdm
 
 import os
 
@@ -115,19 +116,21 @@ def seg_kmeans(imgs, pixsizes, opts0='v6.1'):
 
         img = bg_subtract(img)
 
+        # FEATURE 3: Denoise image.
         img_denoise = cv2.bilateralFilter(img, d=15, sigmaColor=650, sigmaSpace=1)
         
+        # FEATURE 1: Entropy.
         se = morphology.disk(round(5 * opts['morphsc']))
         i10 = cv2.morphologyEx(img_denoise, cv2.MORPH_BLACKHAT, se)
 
-        # i11 = entropy(i10, morphology.disk(15))
-        i11 = entropy(i10, morphology.rectangle(15, 15))
+        i11 = filters.rank.entropy(i10, morphology.rectangle(15, 15))
         i11 = i11 / np.max(i11) * 255  # scale before converting to int
         i11 = i11.astype(np.uint8)
 
         se12 = morphology.disk(max(round(5 * morph_param), 1))
         i12 = cv2.morphologyEx(i11, cv2.MORPH_CLOSE, se12)
 
+        # FEATURE 2: Adjusted Otsu.
         i1 = img_as_ubyte(img_denoise)
         i1 = cv2.GaussianBlur(i1, (0,0), round(5 * morph_param), round(5 * morph_param))
 
@@ -169,6 +172,7 @@ def seg_kmeans(imgs, pixsizes, opts0='v6.1'):
                 i5[bw1 == jj] = 1
         i5 = cv2.GaussianBlur(img_as_ubyte(i5), (0,0), int(3.75 * opts['morphsc']), int(3.75 * opts['morphsc']))
 
+        # COMPILE FEATURES.
         feature_set[ii] = np.dstack((i12, i5, img_denoise)).astype(np.float32)
 
         # Scale feature set.
@@ -197,7 +201,56 @@ def seg_kmeans(imgs, pixsizes, opts0='v6.1'):
         img_kmeans = img_kmeans[0]
         feature_set = feature_set[0]
 
+    print('Complete.\n')
+
     return img_binary, img_kmeans, feature_set
+
+
+def seg_otsu(imgs, pixsizes=None, *args):
+    """
+    Performs Otsu thresholding and a rolling ball transformation.
+
+    Parameters:
+        imgs (list or np.ndarray): A list of cropped images or a single image.
+        pixsizes (list or float, optional): Pixel sizes in nm/pixel. Default is 1.
+        *args: Arguments to be passed to the rolling_ball operation.
+
+    Returns:
+        list or np.ndarray: Binary mask(s).
+    """
+    # Handle inputs
+    if pixsizes is None:
+        raise ValueError("PIXSIZES is a required argument unless images structure is given.")
+    if not isinstance(imgs, list):
+        imgs = [imgs]
+    if not isinstance(pixsizes, list):
+        pixsizes = [pixsizes] * len(imgs)
+
+    n = len(imgs)
+    img_binary = []
+
+    print("Performing Otsu segmentation:")
+    for ii in tqdm(range(n)):
+        img = imgs[ii]
+        pixsize = pixsizes[ii]
+
+        # Step 0a: Remove the background
+        img = bg_subtract(img)
+
+        # Step 0b: Perform denoising
+        img = cv2.bilateralFilter(img, d=15, sigmaColor=650, sigmaSpace=1)
+
+        # Step 1: Apply intensity threshold (Otsu)
+        level = filters.threshold_otsu(img)
+        bw = img > level
+
+        # Step 2: Rolling Ball Transformation
+        binary = rolling_ball(bw, pixsize, *args)
+        img_binary.append(invert(binary))
+    print("Complete.\n")
+
+    # If a single image, return the binary mask directly
+    return img_binary[0] if n == 1 else img_binary
 
 
 def bg_subtract(img):
@@ -241,6 +294,67 @@ def bg_subtract(img):
     return img_out
 
 
+def rolling_ball(img_binary, pixsize, minparticlesize=4.9, coeffs=None):
+    """
+    Perform a rolling ball transformation on a binary image.
+    
+    Parameters:
+        img_binary (np.ndarray): Binary image.
+        pixsize (float): Pixel size in nm/pixel.
+        minparticlesize (float, optional): Minimum particle size. Default is 4.9.
+        coeffs (list, optional): Coefficient matrix defining element sizes at different stages.
+    
+    Returns:
+        np.ndarray: Transformed binary image.
+    """
+    # Default coefficient matrix
+    coeff_matrix = np.array([
+        [0.2, 0.8, 0.4, 1.1, 0.4],
+        [0.2, 0.3, 0.7, 1.1, 1.8],
+        [0.3, 0.8, 0.5, 2.2, 3.5],
+        [0.1, 0.8, 0.4, 1.1, 0.5]
+    ])
+    
+    # Select coefficients based on pixsize
+    if coeffs is None:
+        if pixsize <= 0.181:
+            coeffs = coeff_matrix[0]
+        elif pixsize <= 0.361:
+            coeffs = coeff_matrix[1]
+        else:
+            coeffs = coeff_matrix[2]
+    
+    a, b, c, d, e = coeffs
+    
+    # Rolling ball transformations (morphological operations)
+    se = morphology.disk(round(a * minparticlesize / pixsize))
+    img_binary = morphology.closing(img_binary, se)
+    
+    se = morphology.disk(round(b * minparticlesize / pixsize))
+    img_binary = morphology.opening(img_binary, se)
+    
+    se = morphology.disk(round(c * minparticlesize / pixsize))
+    img_binary = morphology.closing(img_binary, se)
+    
+    se = morphology.disk(round(d * minparticlesize / pixsize))
+    img_binary = morphology.opening(img_binary, se)
+    
+    # Delete small blobs below threshold area size
+    labeled_img = label(np.abs(img_binary - 1))
+    regions = regionprops(labeled_img)
+    
+    nparts = len(regions)
+    mod = 10 if nparts > 50 else 1
+    
+    for region in regions:
+        area = region.area * pixsize ** 2
+        if area <= (mod * e * minparticlesize / pixsize) ** 2:
+            img_binary[labeled_img == region.label] = 1
+    
+    return img_binary
+
+
+#== ANALYSIS FUNCTIONS ===============================================================#
 def analyze_binary(imgs_binary, pixsize=None, imgs=None, fname=None, f_edges=1, f_plot=1, maxagg=50):
     # Parse inputs
     if isinstance(imgs_binary, dict):  # consider case that structure is given as input
@@ -391,6 +505,8 @@ def analyze_binary(imgs_binary, pixsize=None, imgs=None, fname=None, f_edges=1, 
         if f_plot == 1:
             tools.imshow_agg(Aggs0, list([jj - 1]))
             plt.show()
+
+    print('Complete.\n')
 
     return Aggs
 

@@ -7,7 +7,11 @@ import numpy as np
 
 import albumentations as albu
 import onnxruntime as rt
+
 from PIL import Image
+
+import cv2
+from skimage.morphology import disk, closing, opening, remove_small_objects
 
 from tqdm import tqdm
 
@@ -118,11 +122,11 @@ class Classifier:
         predictions = [None] * len(imgs)  # initialize the predictions list
 
         # Loop through images and generate predictions.
-        print("Classifying images:")
+        print("Performing carboseg segmentation:")
         for ii in tqdm(range(len(imgs)), bar_format="{l_bar}{bar:15}{r_bar}{bar:-15b}"):
             img = Image.fromarray(imgs[ii]).convert("RGB")  # read in image
             predictions[ii] = self.classify_image(img)  # run classifier on image
-        print("Finished classifying.\n")
+        print("Complete.\n")
 
         return predictions
 
@@ -159,5 +163,18 @@ def seg_cnn(imgs, pixsizes=None, opts=None):
         imgs_binary[ii] = Image.fromarray(imgs_binary[ii])
         imgs_binary[ii] = imgs_binary[ii].resize(sz)
         imgs_binary[ii] = np.array(imgs_binary[ii])
+
+        # Add rolling ball operation.
+        if pixsizes:
+            morph_param = 0.8 / pixsizes[ii]
+            ds = max(round(4 * morph_param), 1)
+            
+            se6 = disk(ds)
+            i7 = closing(imgs_binary[ii], se6)
+            
+            se7 = disk(max(ds - 1, 0))
+            i7 = opening(i7, se7)
+            
+            imgs_binary[ii] = remove_small_objects(i7, min_size=20)
 
     return imgs_binary
