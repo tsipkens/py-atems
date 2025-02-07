@@ -208,7 +208,7 @@ def imshow_binary(img, img_binary, pixsize=None, opts=None):
 
     # Overlay the binary mask on the image
     t0 = label(img_binary)
-    t0 = label2rgb(t0, image=img, alpha=label_alpha, colors=cmap, bg_label=0, image_alpha=0.7)
+    t0 = label2rgb(t0, image=img, alpha=label_alpha, bg_label=0, image_alpha=0.7)  # cmap=[cmap]
 
     if not f_outline:
         i1 = t0
@@ -228,8 +228,14 @@ def imshow_binary(img, img_binary, pixsize=None, opts=None):
     plt.axis('off')
 
 
-def imshow_binary2(imgs:list, imgs_binary:list, pixsizes=None, *args):
+def imshow_binary2(imgs:list, imgs_binary:list, pixsizes:list=None, idx:list=None, *args):
     
+    if not idx == None:
+        imgs = [imgs[ii] for ii in idx]
+        imgs_binary = [imgs_binary[ii] for ii in idx]
+        if not pixsizes == None:
+            pixsizes = [pixsizes[ii] for ii in idx]
+
     if len(imgs) > 24:  # only plot up to 24 images
         imgs = imgs[:24]
         imgs_binary = imgs_binary[:24]
@@ -250,15 +256,6 @@ def imshow_binary2(imgs:list, imgs_binary:list, pixsizes=None, *args):
             i1 = imshow_binary(imgs[ii], imgs_binary[ii], *args)
         else:
             i1 = imshow_binary(imgs[ii], imgs_binary[ii], pixsizes[ii], *args)
-        
-        if ii == 0:
-            h = plt.gca()  # store the handle of the first axis
-            i0 = i1  # store the first image for output
-    
-    if n_imgs > 1:
-        plt.show()
-    
-    f = plt.gcf()  # get the current figure
 
 
 def imshow_beside(img, img_binary, *args):
@@ -326,7 +323,7 @@ def imshow_agg(Aggs, idx=None, f_img=True, opts=None):
             pixsize = Aggs[img_idx[0]]['pixsize'] if opts['f_scale'] else None
 
             # Display the image with binary overlay
-            i0 = imshow_binary2(Aggs[img_idx[0]]['image'], img_binary, pixsize, opts)
+            imshow_binary(Aggs[img_idx[0]]['image'], img_binary, pixsize, opts)
             plt.title(str(idx[ii]))
         
         for agg_idx in img_idx:

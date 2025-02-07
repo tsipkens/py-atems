@@ -108,7 +108,7 @@ def seg_kmeans(imgs, pixsizes, opts0='v6.1'):
     img_kmeans = [None] * n
     feature_set = [None] * n
 
-    print(f'Performing k-means segmentation ({opts0}):')
+    print(f'Performing k-means segmentation ({opts0}).')
     for ii in tqdm(range(n)):
         img = imgs[ii]
         pixsize = pixsizes[ii]
