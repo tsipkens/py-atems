@@ -1,6 +1,5 @@
 # Custom exclusions
 data_local/
-dm3_lib/
 out/
 images/slider
 working/
