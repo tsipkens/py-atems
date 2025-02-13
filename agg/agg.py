@@ -11,6 +11,10 @@ from skimage.util import img_as_ubyte, invert
 from skimage.draw import polygon
 from skimage import measure, morphology, filters
 from skimage.measure import label, regionprops
+try:
+    from skimage.morphology.footprint import rectangle  # Newer versions (0.22+)
+except ImportError:
+    from skimage.morphology import rectangle  # Older versions (pre-0.22)
 
 from tqdm import tqdm
 
@@ -29,11 +33,23 @@ import tabulate  # only used for displaying Aggs structure
 import tools
 
 
+# To access a field, e.g.: [d['da'] for d in Aggs] OR:
 def get(Aggs, key):
     p = np.array([])
     for Agg in Aggs:
         p = np.append(p, Agg[key])
     return p
+
+# Function to show structure.
+def show(Aggs):
+    header = Aggs[0].keys()
+    rows = [Agg.values() for Agg in Aggs]
+    print(tabulate.tabulate(rows, header))
+
+# Write a simplified version of .
+def write(Aggs):
+    pass
+    # remove fields that are not scalar or small number of values (rect okay, don't need it though)
 
 
 def seg_kmeans(imgs, pixsizes, opts0='v6.1'):
@@ -123,7 +139,7 @@ def seg_kmeans(imgs, pixsizes, opts0='v6.1'):
         se = morphology.disk(round(5 * opts['morphsc']))
         i10 = cv2.morphologyEx(img_denoise, cv2.MORPH_BLACKHAT, se)
 
-        i11 = filters.rank.entropy(i10, morphology.rectangle(15, 15))
+        i11 = filters.rank.entropy(i10, rectangle(15, 15))
         i11 = i11 / np.max(i11) * 255  # scale before converting to int
         i11 = i11.astype(np.uint8)
 
@@ -510,14 +526,6 @@ def analyze_binary(imgs_binary, pixsize=None, imgs=None, fname=None, f_edges=1, 
 
     return Aggs
 
-# To access a field, e.g.: [d['da'] for d in Aggs]
-
-
-def show(Aggs):
-    header = Aggs[0].keys()
-    rows = [Agg.values() for Agg in Aggs]
-    print(tabulate.tabulate(rows, header))
-
 
 
 def gyration(img_binary, pixsize):
@@ -563,6 +571,25 @@ def get_perimeter2(img_binary):
     p_circ = np.sum(np.sqrt((xx_mb - np.roll(xx_mb, -1))**2 + (yy_mb - np.roll(yy_mb, -1))**2))
     
     return p_circ
+
+
+def box_counting(img_binary):
+    # Find the contours of the binary image
+    i, _, _ = autocrop(img_binary, img_binary)
+
+    eps = np.arange(2, 6)
+    eps = eps[1::2]
+
+    N = np.zeros(len(eps))
+    for ii in range(len(eps)):
+        n = np.int16(eps[ii])
+        i2 = morphology.dilation(i, np.ones((n,n)))
+        i2 = i2[np.int16((n-1)/2)::n, np.int16((n-1)/2)::n]
+        N[ii] = np.sum(i2)
+
+    d = (np.log(N[1]) - np.log(N[0])) / (np.log(1/eps[1]) - np.log(1/eps[0]))
+    return d
+    
 
 
 def autocrop(img_orig, img_binary):

@@ -630,7 +630,7 @@ def loghist(y, n=20):
     plt.plot(x, p, 'k', linewidth=2)
 
     # Return GMD and GSD.
-    return np.exp(mu), np.exp(sg)
+    return mu, sg
 
 
 #== SAVING AND LOAING DATA AND IMAGES ===================#
