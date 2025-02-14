@@ -52,7 +52,7 @@ def write(Aggs):
     # remove fields that are not scalar or small number of values (rect okay, don't need it though)
 
 
-def seg_kmeans(imgs, pixsizes, opts0='v6.1'):
+def seg_kmeans(imgs, pixsizes, opts0='default'):
     """
      Compiling these different feature layers results in a three 
      layer image (see FEATURE_SET output) that will be used for segmentation. 
@@ -117,7 +117,7 @@ def seg_kmeans(imgs, pixsizes, opts0='v6.1'):
     if pixsizes is None:
         raise ValueError("PIXSIZES is a required argument unless Imgs structure is given.")
     
-    opts = tools.load_config(os.path.join(os.path.dirname(__file__), f'config\\km.{opts0}.json'))
+    opts = tools.load_config(os.path.join(os.path.dirname(__file__), f'config\\km.{opts0}.yaml'))
     
     n = len(imgs)
     img_binary = [None] * n
@@ -217,7 +217,7 @@ def seg_kmeans(imgs, pixsizes, opts0='v6.1'):
         img_kmeans = img_kmeans[0]
         feature_set = feature_set[0]
 
-    print('Complete.\n')
+    tools.textdone()
 
     return img_binary, img_kmeans, feature_set
 
@@ -263,7 +263,7 @@ def seg_otsu(imgs, pixsizes=None, *args):
         # Step 2: Rolling Ball Transformation
         binary = rolling_ball(bw, pixsize, *args)
         img_binary.append(invert(binary))
-    print("Complete.\n")
+    tools.textdone()
 
     # If a single image, return the binary mask directly
     return img_binary[0] if n == 1 else img_binary
