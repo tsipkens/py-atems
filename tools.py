@@ -27,6 +27,7 @@ from PIL import Image
 from tqdm import tqdm
 
 import json
+import yaml
 import os
 import pickle
 
@@ -34,12 +35,16 @@ import dm3_lib as dm3
 
 
 def load_config(fn):
-    """Loads JSON configuration files.
-
-    First loads default configuration before modifying those inputs.
     """
-    with open(fn) as f:
-        opts = json.load(f)
+    Loads configuration files (either JSON or YAML).
+    """
+    if fn[-4:].lower() == 'json':
+        with open(fn) as f:
+            opts = json.load(f)
+
+    else:
+        with open(fn) as f:
+            opts = yaml.safe_load(f)
         
     return opts
 
@@ -410,7 +415,7 @@ def load_imgs(fd=None, n=None):
 
     print('Image import complete.\n')
 
-    return Imgs, imgs, pixsize
+    return imgs, pixsize
 
 
 def detect_footer_scale(Imgs, f_replace):
@@ -518,9 +523,9 @@ def load_dm3(fd, n=None):
         img = dm3f.imagedata
 
         # Convert to uint8 image.
-        img = img / np.max(img)
-        img = 255 * img # Now scale by 255
-        img = img.astype(np.uint8)
+        img = img - np.min(img)  # adjust minimum to start at 0
+        img = 255 * (img / np.max(img))  # scale based on max. and cover 0 > 255
+        img = img.astype(np.uint8)  # convert to integer
         
         imgs[ii] = img
 
@@ -633,31 +638,57 @@ def loghist(y, n=20):
     return mu, sg
 
 
+def textdone():
+    print('\r' +'\033[32m' + 'DONE!' + '\033[0m' + '\n')
+
+
 #== SAVING AND LOAING DATA AND IMAGES ===================#
 def save_data(fname, data):
     """
     Save dat files using pickle (e.g., Aggs structures).
     """
+    print('Saving data ...')
     with open(fname, "wb") as file:
         pickle.dump(data, file)
+    textdone()
 
 
 def load_data(fname):
     """
     Load data files using pickle.
+    Outputs the same number of variables as was originally saved.
     """
+    print('Loading data ...')
     with open(fname, "rb") as file:
         out = pickle.load(file)
+    print(f'Loaded {str(len(out))} variables.')
+    textdone()
     return out
 
 
 def write_images(fd, imgs):
     """
-    Load files using pickle.
+    Write images in imgs to folder.
     """
-    if not os.path.exists(fd):
+    if not os.path.exists(fd):  # create folder if necessary
         os.makedirs(fd)
 
-    for ii in range(len(imgs)):
+    print('Writing images:')
+    for ii in tqdm(range(len(imgs))):
         img = Image.fromarray(imgs[ii])
         img.save(f"{fd}\\{str(ii).zfill(3)}.png")
+    textdone()
+
+
+def write_binary(fd, imgs, imgs_binary, ext='svg'):
+    """
+    Write binary masked images to folder.
+    """
+    if not os.path.exists(fd):  # create folder if necessary
+        os.makedirs(fd)
+
+    print('Writing figures:')
+    for ii in tqdm(range(len(imgs))):
+        imshow_binary(imgs[ii], imgs_binary[ii])
+        plt.savefig(f"{fd}\\{str(ii).zfill(3)}.{ext}")
+    textdone()
