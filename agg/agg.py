@@ -114,8 +114,6 @@ def seg_kmeans(imgs, pixsizes, opts0='default'):
      
      AUTHOR: Timothy Sipkens, 2020-08-13
     """
-    if pixsizes is None:
-        raise ValueError("PIXSIZES is a required argument unless Imgs structure is given.")
     
     opts = tools.load_config(os.path.join(os.path.dirname(__file__), f'config\\km.{opts0}.yaml'))
     
@@ -128,7 +126,7 @@ def seg_kmeans(imgs, pixsizes, opts0='default'):
     for ii in tqdm(range(n)):
         img = imgs[ii]
         pixsize = pixsizes[ii]
-        morph_param = 0.8 / pixsize  # changed relative to MATLAB
+        morph_param = 0.8 / pixsize  # morphological scale parameter used several places below
 
         img = bg_subtract(img)
 
@@ -137,6 +135,7 @@ def seg_kmeans(imgs, pixsizes, opts0='default'):
         
         # FEATURE 1: Entropy.
         se = morphology.disk(round(5 * opts['morphsc']))
+        # se = morphology.disk(round(25 * morph_param * opts['morphsc']))  # updated in Python
         i10 = cv2.morphologyEx(img_denoise, cv2.MORPH_BLACKHAT, se)
 
         i11 = filters.rank.entropy(i10, rectangle(15, 15))
@@ -144,7 +143,14 @@ def seg_kmeans(imgs, pixsizes, opts0='default'):
         i11 = i11.astype(np.uint8)
 
         se12 = morphology.disk(max(round(5 * morph_param), 1))
+        # se12 = morphology.disk(max(round(25 * morph_param * opts['morphsc']), 1))  # updated in Python
         i12 = cv2.morphologyEx(i11, cv2.MORPH_CLOSE, se12)
+
+        # Considered in the Python version.
+        # Scale image and enhance contrast.
+        # i12 = i12 - np.min(i12)  # scale image
+        # i12 = 255 * (i12 / np.max(i12))
+        # i12 = tools.enhance_contrast([i12.astype(np.uint8)], 1.5)[0].astype(np.float32)
 
         # FEATURE 2: Adjusted Otsu.
         i1 = img_as_ubyte(img_denoise)
@@ -189,15 +195,31 @@ def seg_kmeans(imgs, pixsizes, opts0='default'):
         i5 = cv2.GaussianBlur(img_as_ubyte(i5), (0,0), int(3.75 * opts['morphsc']), int(3.75 * opts['morphsc']))
 
         # COMPILE FEATURES.
-        feature_set[ii] = np.dstack((i12, i5, img_denoise)).astype(np.float32)
-
-        # Scale feature set.
+        feature_set[ii] = np.stack([i12, i5, img_denoise], axis=2).astype(np.float32)
         fs = feature_set[ii]
+
+        # Reshape for k-means (each pixel as a feature vector)
+        h, w, c = fs.shape
+        fs = fs.reshape(-1, c)  # Convert (H, W, 3) → (H*W, 3)
+
+        # Scale feature set removed in Python version.
         fs = fs - np.mean(np.mean(fs, 0), 0)
         fs = fs / np.std(fs.reshape(-1, 3), 0)
 
-        kmeans = KMeans(n_clusters=2, random_state=0).fit(fs.reshape(-1, 3))
-        img_kmeans[ii] = kmeans.labels_.reshape(img.shape)
+        # Perform K-means clustering
+        kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
+        labels = kmeans.fit_predict(fs)
+
+        # Reshape labels back to image size
+        # and convert to binary mask.
+        bw = labels.reshape(h, w) == 1
+
+        # Identify the segment with the maximum mean intensity.
+        mean_values = [img_denoise[bw].mean(), img_denoise[~bw].mean()]
+        ind_max = np.argmax(mean_values)
+
+        # Segmented image.
+        img_kmeans[ii] = (bw == (ind_max == 0))
 
         # Reverse BG and labeled data. 
         if np.mean(img[img_kmeans[ii] == 1]) > np.mean(img[img_kmeans[ii] == 0]):
