@@ -393,7 +393,7 @@ def rolling_ball(img_binary, pixsize, minparticlesize=4.9, coeffs=None):
 
 
 #== ANALYSIS FUNCTIONS ===============================================================#
-def analyze_binary(imgs_binary, pixsize=None, imgs=None, fname=None, f_edges=1, f_plot=1, maxagg=50):
+def analyze_binary(imgs_binary, pixsize=None, imgs=None, fname=None, f_edges=1, f_plot=0, maxagg=50):
     # Parse inputs
     if isinstance(imgs_binary, dict):  # consider case that structure is given as input
         Imgs = imgs

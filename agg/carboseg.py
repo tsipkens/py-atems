@@ -126,7 +126,7 @@ class Classifier:
         for ii in tqdm(range(len(imgs)), bar_format="{l_bar}{bar:15}{r_bar}{bar:-15b}"):
             img = Image.fromarray(imgs[ii]).convert("RGB")  # read in image
             predictions[ii] = self.classify_image(img)  # run classifier on image
-        print("Complete.\n")
+        print("DONE.\n")
 
         return predictions
 
