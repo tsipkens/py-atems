@@ -30,6 +30,7 @@ import json
 import yaml
 import os
 import pickle
+import pandas as pd
 
 import dm3_lib as dm3
 
@@ -529,7 +530,7 @@ def load_dm3(fd, n=None):
         
         imgs[ii] = img
 
-    print('Import complete.\n')
+    textdone()
 
     return imgs, pixsizes
 
@@ -647,6 +648,10 @@ def save_data(fname, data):
     """
     Save dat files using pickle (e.g., Aggs structures).
     """
+    fd, _ = os.path.split(fname)
+    if not os.path.exists(fd):  # create folder if necessary
+        os.makedirs(fd)
+
     print('Saving data ...')
     with open(fname, "wb") as file:
         pickle.dump(data, file)
@@ -664,6 +669,23 @@ def load_data(fname):
     print(f'Loaded {str(len(out))} variables.')
     textdone()
     return out
+
+
+def write_aggs(fname, Aggs):
+    """
+    Save Aggs structure to Excel.
+    """
+    fd, _ = os.path.split(fname)
+    if not os.path.exists(fd):  # create folder if necessary
+        os.makedirs(fd)
+
+    print('Writing Aggs ...')
+    if not isinstance(Aggs, pd.DataFrame):
+        Aggs = pd.DataFrame(Aggs)
+    Aggs = Aggs.drop(['image', 'binary'], axis=1)
+    Aggs.to_excel(fname, index = False)
+
+    textdone()
 
 
 def write_images(fd, imgs):
@@ -691,4 +713,5 @@ def write_binary(fd, imgs, imgs_binary, ext='svg'):
     for ii in tqdm(range(len(imgs))):
         imshow_binary(imgs[ii], imgs_binary[ii])
         plt.savefig(f"{fd}\\{str(ii).zfill(3)}.{ext}")
+        plt.clf()
     textdone()
