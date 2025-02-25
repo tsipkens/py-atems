@@ -46,12 +46,8 @@ def show(Aggs):
     rows = [Agg.values() for Agg in Aggs]
     print(tabulate.tabulate(rows, header))
 
-# Write a simplified version of .
-def write(Aggs):
-    pass
-    # remove fields that are not scalar or small number of values (rect okay, don't need it though)
 
-
+# SEGMENTATION METHODS ======================================================================#
 def seg_kmeans(imgs, pixsizes, opts0='default'):
     """
      Compiling these different feature layers results in a three 
@@ -392,8 +388,8 @@ def rolling_ball(img_binary, pixsize, minparticlesize=4.9, coeffs=None):
     return img_binary
 
 
-#== ANALYSIS FUNCTIONS ===============================================================#
-def analyze_binary(imgs_binary, pixsize=None, imgs=None, fname=None, f_edges=1, f_plot=0, maxagg=50):
+# BINARY ANALYSIS METHODS =================================================================#
+def analyze_binary(imgs_binary, pixsize, imgs, fname=None, f_edges=1, f_plot=0, maxagg=50):
     # Parse inputs
     if isinstance(imgs_binary, dict):  # consider case that structure is given as input
         Imgs = imgs
@@ -429,7 +425,6 @@ def analyze_binary(imgs_binary, pixsize=None, imgs=None, fname=None, f_edges=1, 
     print("Progress:")
     for ii in tqdm(range(len(imgs_binary))):  # loop through provided images
         img_binary = imgs_binary[ii]
-        img = imgs[ii]
 
         # Skip images with more than 25% boundary aggregates
         bwborder = np.logical_and(img_binary, clear_border(img_binary))
@@ -476,15 +471,13 @@ def analyze_binary(imgs_binary, pixsize=None, imgs=None, fname=None, f_edges=1, 
                 'fname': fname[ii],
                 'pixsize': pixsize[ii]
             }
-            if jj == 1:
-                agg_jj['image'] = img
-            else:
-                agg_jj['image'] = None
 
             mask = (labeled_img == jj).astype(np.uint8)
-            agg_jj['binary'] = mask
+            # agg_jj['binary'] = mask # no longer save this, to keep Agg size manageable
 
-            _,_,rect = autocrop(img, mask)
+            agg_jj['first_pixel'] = np.argwhere(mask)[0]
+
+            rect, mask = autocrop(mask)
             agg_jj['rect'] = rect
 
             row, col = np.where(mask)
@@ -595,38 +588,66 @@ def get_perimeter2(img_binary):
     return p_circ
 
 
-def box_counting(img_binary):
-    # Find the contours of the binary image
-    i, _, _ = autocrop(img_binary, img_binary)
-
-    eps = np.arange(2, 6)
-    eps = eps[1::2]
-
-    N = np.zeros(len(eps))
-    for ii in range(len(eps)):
-        n = np.int16(eps[ii])
-        i2 = morphology.dilation(i, np.ones((n,n)))
-        i2 = i2[np.int16((n-1)/2)::n, np.int16((n-1)/2)::n]
-        N[ii] = np.sum(i2)
-
-    d = (np.log(N[1]) - np.log(N[0])) / (np.log(1/eps[1]) - np.log(1/eps[0]))
-    return d
-    
-
-
-def autocrop(img_orig, img_binary):
+# CROPPING AND IMAGE MAPPING ==============================================================#
+def autocrop(img_binary, img_orig=None):
+    """
+    Produces rect and cropped version of images.
+    """
     x, y = np.where(img_binary)
 
     space = 3
-    size_img = img_orig.shape
+    size_img = img_binary.shape
 
     x_top = min(max(x) + space, size_img[0])
     x_bottom = max(min(x) - space, 0)
     y_top = min(max(y) + space, size_img[1])
     y_bottom = max(min(y) - space, 0)
 
-    img_binary_cropped = img_binary[x_bottom:x_top, y_bottom:y_top]
-    img_cropped = img_orig[x_bottom:x_top, y_bottom:y_top]
     rect = [y_bottom, x_bottom, y_top - y_bottom, x_top - x_bottom]
+    
+    img_binary_cropped= crop(img_binary, rect)
 
-    return img_cropped, img_binary_cropped, rect
+    # Also crop original image.
+    if not img_orig == None:
+        img_cropped = crop(img_orig, rect)
+        return rect, img_binary_cropped, img_cropped 
+    else:
+        return rect, img_binary_cropped
+    
+
+def crop(img, rect):
+    """
+    Use rect to crop image.
+    """
+    return img[rect[1]:rect[1]+rect[3], rect[0]:rect[0]+rect[2]]
+
+
+def crop_agg(imgs, Aggs, idx=0):
+    """
+    Use rect in Agg to crop image.
+    """
+    return crop(imgs[Aggs[idx].img_id], Aggs[idx].rect)
+
+
+def get_binary(imgs_binary, Aggs, idx=0):
+    """
+    Extracts the binary mask for a single aggregate in the Aggs structure.
+
+    Parameters:
+        mask (ndarray): A binary (logical) mask where objects are labeled as 1.
+        pixel (list): A single [row, col] coordinate inside the object.
+
+    Returns:
+        ndarray: A binary mask of the same shape with only the selected object.
+    """
+    mask = imgs_binary[Aggs[idx]['img_id']]  # index into imgs_binary
+    pixel = Aggs[idx]['first_pixel']  # get first_pixel, which will be used to identify the aggregate
+
+    labeled_mask = label(mask)  # Label connected components
+
+    label_at_pixel = labeled_mask[pixel[0], pixel[1]]  # Access label using list index
+
+    if label_at_pixel == 0:
+        return np.zeros_like(mask)  # Pixel is not inside any object
+
+    return (labeled_mask == label_at_pixel).astype(int)  # Return mask of the selected object

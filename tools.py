@@ -50,10 +50,6 @@ def load_config(fn):
     return opts
 
 
-def imcrop(img, rect):
-    return img[rect[1]:rect[1]+rect[3], rect[0]:rect[0]+rect[2]]
-
-
 def imshow(img, cmap=None, pixsize=None):
     """
     A modified version of imshow that formats images for this program.
