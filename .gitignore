@@ -4,6 +4,7 @@ out/
 images/slider
 working/
 main_*
+tmp.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
