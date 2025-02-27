@@ -165,7 +165,7 @@ def seg_cnn(imgs, pixsizes=None, opts=None):
         imgs_binary[ii] = np.array(imgs_binary[ii])
 
         # Add rolling ball operation.
-        if pixsizes:
+        if not np.all(pixsizes == None):
             morph_param = 0.8 / pixsizes[ii]
             ds = max(round(4 * morph_param), 1)
             
