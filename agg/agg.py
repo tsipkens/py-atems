@@ -1,5 +1,8 @@
 
 import numpy as np
+
+import pandas as pd
+
 import cv2
 
 from scipy.optimize import curve_fit
@@ -48,7 +51,7 @@ def show(Aggs):
 
 
 # SEGMENTATION METHODS ======================================================================#
-def seg_kmeans(imgs, pixsizes, opts0='default'):
+def seg_kmeans(imgs:list, pixsizes:list, v:str='default'):
     """
      Compiling these different feature layers results in a three 
      layer image (see FEATURE_SET output) that will be used for segmentation. 
@@ -95,8 +98,8 @@ def seg_kmeans(imgs, pixsizes, opts0='default'):
      nm/pixel. If not given, 1 nm/pixel is assumed, with implications for the
      rolling ball transform. As before, the output is a binary mask. 
     
-     IMG_BINARY = agg.seg_kmeans(IMGS,PIXSIZES,OPTS) adds a options data 
-     structure that controls the minimum size of aggregates (in pixels) 
+     IMG_BINARY = agg.seg_kmeans(IMGS,PIXSIZES,V) adds a version string that
+     loads options that controls the minimum size of aggregates (in pixels) 
      allowed by the program. 
     
      [IMG_BINARY,IMG_KMEANS] = agg.seg_kmeans(...) adds an output for the raw
@@ -111,14 +114,14 @@ def seg_kmeans(imgs, pixsizes, opts0='default'):
      AUTHOR: Timothy Sipkens, 2020-08-13
     """
     
-    opts = tools.load_config(os.path.join(os.path.dirname(__file__), f'config\\km.{opts0}.yaml'))
+    opts = tools.load_config(os.path.join(os.path.dirname(__file__), f'config\\km.{v}.yaml'))
     
     n = len(imgs)
     img_binary = [None] * n
     img_kmeans = [None] * n
     feature_set = [None] * n
 
-    print(f'Performing k-means segmentation ({opts0}).')
+    print(f'Performing k-means segmentation ({v}).')
     for ii in tqdm(range(n)):
         img = imgs[ii]
         pixsize = pixsizes[ii]
@@ -389,7 +392,7 @@ def rolling_ball(img_binary, pixsize, minparticlesize=4.9, coeffs=None):
 
 
 # BINARY ANALYSIS METHODS =================================================================#
-def analyze_binary(imgs_binary, pixsize, imgs, fname=None, f_edges=1, f_plot=0, maxagg=50):
+def analyze_binary(imgs_binary, pixsize, imgs, fname=None, remove_edge_aggs=False, toplot=False, maxagg=50):
     # Parse inputs
     if isinstance(imgs_binary, dict):  # consider case that structure is given as input
         Imgs = imgs
@@ -415,14 +418,14 @@ def analyze_binary(imgs_binary, pixsize, imgs, fname=None, f_edges=1, f_plot=0, 
         fname = [None] * len(imgs_binary)
 
     # Initialize figure for plot
-    if f_plot == 1:
+    if toplot == 1:
         f0 = plt.figure()
 
+    # Initialize variables. 
     Aggs = []  # Initialize Aggs structure
-    id = 0
+    id = 0  # start aggregate index at 0
 
-    print("Analyzing binaries")
-    print("Progress:")
+    print("Analyzing binaries:")
     for ii in tqdm(range(len(imgs_binary))):  # loop through provided images
         img_binary = imgs_binary[ii]
 
@@ -451,7 +454,7 @@ def analyze_binary(imgs_binary, pixsize, imgs, fname=None, f_edges=1, f_plot=0, 
             fun = lambda x: np.sqrt((np.indices(img_binary.shape) - x[0])**2 + (np.indices(img_binary.shape) - x[1])**2) > x[2]
             img_binary = np.logical_or(fun([m1, m2, img_edm[m1, m2] - 100]), img_binary)
 
-        if f_edges:
+        if remove_edge_aggs:
             img_binary = clear_border(img_binary)
 
         img_binary = morphology.remove_small_objects(img_binary, min_size=10)
@@ -464,26 +467,25 @@ def analyze_binary(imgs_binary, pixsize, imgs, fname=None, f_edges=1, f_plot=0, 
 
         Aggs0 = []
         for jj in range(1, naggs + 1):  # loop through number of found aggregates
-            id += 1
             agg_jj = {
                 'id': id,
                 'img_id': ii,
                 'fname': fname[ii],
                 'pixsize': pixsize[ii]
             }
+            id += 1
 
             mask = (labeled_img == jj).astype(np.uint8)
             # agg_jj['binary'] = mask # no longer save this, to keep Agg size manageable
 
             agg_jj['first_pixel'] = np.argwhere(mask)[0]
 
-            rect, mask = autocrop(mask)
-            agg_jj['rect'] = rect
-
             row, col = np.where(mask)
+            agg_jj['center_mass'] = [np.mean(row), np.mean(col)]
+
             agg_jj['length'] = max(np.ptp(row), np.ptp(col)) * pixsize[ii]
             agg_jj['width'] = min(np.ptp(row), np.ptp(col)) * pixsize[ii]
-            agg_jj['aspect_ratio0'] = agg_jj['length'] / agg_jj['width']
+            agg_jj['aspect_ratio'] = agg_jj['length'] / agg_jj['width']
 
             # d = np.sqrt((row[:, None] - row[None, :]) ** 2 + (col[:, None] - col[None, :]) ** 2)
             # dmax = np.max(d)
@@ -496,6 +498,9 @@ def analyze_binary(imgs_binary, pixsize, imgs, fname=None, f_edges=1, f_plot=0, 
             # dd = np.ptp(d_line)
             # agg_jj['lmin'] = dd * pixsize[ii]
             # agg_jj['aspect_ratio'] = agg_jj['lmax'] / agg_jj['lmin']
+
+            rect, mask = autocrop(mask)
+            agg_jj['rect'] = rect
 
             agg_jj['num_pixels'] = np.count_nonzero(mask)
             agg_jj['da'] = 2 * np.sqrt(agg_jj['num_pixels'] / np.pi) * pixsize[ii]
@@ -528,16 +533,16 @@ def analyze_binary(imgs_binary, pixsize, imgs, fname=None, f_edges=1, f_plot=0, 
             # gray_extent = np.ptp(img)
             # agg_jj['depth'] = -(np.mean(agg_grayscale) - bg_level) / 255
 
-            agg_jj['center_mass'] = [np.mean(row), np.mean(col)]
-
             Aggs0.append(agg_jj)
 
         Aggs.extend(Aggs0)
-        if f_plot == 1:
-            tools.imshow_agg(Aggs0, list([jj - 1]))
+        if toplot == 1:
+            tools.imshow_agg(pd.DataFrame(Aggs0), imgs, imgs_binary)
             plt.show()
 
-    print('Complete.\n')
+    Aggs = pd.DataFrame(Aggs)  # convert to DataFrame
+
+    tools.textdone()
 
     return Aggs
 

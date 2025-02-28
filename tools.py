@@ -252,7 +252,7 @@ def imshow_binary2(imgs:list, imgs_binary:list, pixsizes:list=None, idx:list=Non
     for ii in range(n_imgs):
         if n_imgs > 1:
             plt.subplot(N1, N2, ii + 1)
-            plt.title(str(ii + 1))
+            plt.title(str(ii))
         
         if pixsizes is None:
             i1 = imshow_binary(imgs[ii], imgs_binary[ii], *args)
@@ -273,12 +273,12 @@ def imshow_beside(img, img_binary, *args):
     imshow_binary(img, img_binary, *args)
 
 
-def imshow_agg(Aggs, idx=None, f_img=True, opts=None):
+def imshow_agg(Aggs, imgs, imgs_binary, idx=None, f_img=True, opts=None):
     # Parse inputs
-    if idx is None:
-        idx = np.unique([d['img_id'] for d in Aggs])
+    if np.any(idx == None):
+        idx = np.unique(Aggs['img_id'])
     else:
-        idx = list(set(Aggs[ii]['img_id'] for ii in idx))
+        idx = np.unique([Aggs.loc[ii]['img_id'] for ii in idx])
     
     if len(idx) > 24 and not isinstance(idx, list):
         idx = idx[:24]
@@ -304,32 +304,30 @@ def imshow_agg(Aggs, idx=None, f_img=True, opts=None):
         N1 = int(np.floor(np.sqrt(n_img)))
         N2 = int(np.ceil(n_img / N1))
         plt.subplot(N1, N2, 1)
-    
-    frames = []
 
     for ii in range(n_img):
         if n_img > 1 and not opts['f_show']:
             plt.subplot(N1, N2, ii + 1)
 
         # Determine aggregates to plot for this image
-        img_idx = [i for i, agg in enumerate(Aggs) if agg['img_id'] == idx[ii]]
+        img_idx = Aggs.index[Aggs['img_id'] == idx[ii]].tolist()
         if not img_idx:
             print(f'Warning: No aggregates for image no. {idx[ii]}.')
             continue
 
         if f_img:
-            img_binary = np.zeros_like(Aggs[img_idx[0]]['image'])
+            img_binary = np.zeros_like(imgs[idx[ii]])
             for agg_idx in img_idx:
-                img_binary = np.logical_or(img_binary, Aggs[agg_idx]['binary'])
+                img_binary = np.logical_or(img_binary, imgs_binary[idx[ii]])
             
             pixsize = Aggs[img_idx[0]]['pixsize'] if opts['f_scale'] else None
 
             # Display the image with binary overlay
-            imshow_binary(Aggs[img_idx[0]]['image'], img_binary, pixsize, opts)
+            imshow_binary(imgs[idx[ii]], img_binary, pixsize, opts)
             plt.title(str(idx[ii]))
         
         for agg_idx in img_idx:
-            agg = Aggs[agg_idx]
+            agg = Aggs.loc[agg_idx]
 
             # Plot an 'x' at the CoM. 
             plt.plot(agg['center_mass'][1], agg['center_mass'][0], 'xk', linewidth=0.75)
@@ -349,10 +347,6 @@ def imshow_agg(Aggs, idx=None, f_img=True, opts=None):
             if opts['f_dp'] and hasattr(agg, 'dp') and not np.isnan(agg.dp):
                 plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), 
                                            agg['dp'] / 2 / agg['pixsize'], color=[0.92, 0.16, 0.49], fill=False, linewidth=0.75))
-
-    plt.draw()
-    if n_img > 1:
-        plt.show()
 
 
 #=========================================================================#
@@ -405,14 +399,21 @@ def load_imgs(fd=None, n=None):
     print('Images loaded.\n')
 
     f_replace = 1
-    Imgs = detect_footer_scale(Imgs, f_replace)
+    try:
+        Imgs = detect_footer_scale(Imgs, f_replace)
 
+    except:
+        print('Could not get pixel size.')
+        for img in Imgs:
+            img['cropped'] = img['raw']
+            img['pixsize'] = np.nan
+    
     imgs = [img['cropped'] for img in Imgs]
     pixsize = [img.get('pixsize', np.nan) for img in Imgs]
 
     print('Image import complete.\n')
 
-    return imgs, pixsize
+    return imgs, pixsize, Imgs
 
 
 def detect_footer_scale(Imgs, f_replace):
@@ -486,6 +487,46 @@ def detect_footer_scale(Imgs, f_replace):
         print("Footer found for all images.\n")
 
     return Imgs
+
+def extract_scale_bar(image_path):
+    # Step 1: Load the image
+    image = cv2.imread(image_path)
+    
+    # Step 2: Convert to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Step 3: Apply thresholding to isolate bright/dark regions (adjust values if needed)
+    _, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)  # Adjust 200 if needed
+    
+    # Step 4: Find contours
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Step 5: Identify the largest rectangular contour (assumed to be the scale bar)
+    scale_bar = None
+    max_area = 0
+    
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+        area = w * h
+        aspect_ratio = w / h if h > 0 else 0  # To filter long, thin objects
+        
+        # Adjust conditions based on your specific scale bar properties
+        if area > max_area and aspect_ratio > 2:  
+            max_area = area
+            scale_bar = (x, y, w, h)
+
+    if scale_bar:
+        x, y, w, h = scale_bar
+        scale_bar_region = image[y:y+h, x:x+w]
+        width = np.shape(scale_bar_region)[1]
+        
+        # Step 6: Save the extracted scale bar
+        print(f"Scale bar extracted. Length: {width}")
+        
+        return width
+    else:
+        print("No scale bar detected.")
+        return None
 
 
 def bbox2mask(bboxs, img_size):
