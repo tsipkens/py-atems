@@ -7,6 +7,7 @@ import cv2
 
 from scipy.optimize import curve_fit
 from scipy import ndimage
+from scipy.spatial import ConvexHull
 
 from skimage import filters, measure, morphology
 from skimage.segmentation import clear_border
@@ -442,17 +443,7 @@ def analyze_binary(imgs_binary, pixsize, imgs, fname=None, remove_edge_aggs=Fals
             np.count_nonzero(img_binary[-1, :]) / img_binary.shape[1]
         ]
         if any(x > 0.2 for x in nn):
-            ia = img_binary.copy()
-            if nn[0] <= 0.2: ia[:, 0] = 0
-            if nn[1] <= 0.2: ia[:, -1] = 0
-            if nn[2] <= 0.2: ia[0, :] = 0
-            if nn[3] <= 0.2: ia[-1, :] = 0
-
-            img_edges = np.logical_xor(ia, morphology.remove_small_objects(ia))
-            img_edm = ndimage.distance_transform_edt(~img_edges)
-            m1, m2 = np.unravel_index(np.argmax(img_edm), img_edm.shape)
-            fun = lambda x: np.sqrt((np.indices(img_binary.shape) - x[0])**2 + (np.indices(img_binary.shape) - x[1])**2) > x[2]
-            img_binary = np.logical_or(fun([m1, m2, img_edm[m1, m2] - 100]), img_binary)
+            continue  # skip
 
         if remove_edge_aggs:
             img_binary = clear_border(img_binary)
@@ -505,8 +496,27 @@ def analyze_binary(imgs_binary, pixsize, imgs, fname=None, remove_edge_aggs=Fals
             agg_jj['num_pixels'] = np.count_nonzero(mask)
             agg_jj['da'] = 2 * np.sqrt(agg_jj['num_pixels'] / np.pi) * pixsize[ii]
             agg_jj['area'] = agg_jj['num_pixels'] * (pixsize[ii] ** 2)
+
+            # Compute radius of gyration (Rg)
             agg_jj['Rg'] = gyration(mask, pixsize[ii])
 
+            # Get the contour
+            contour = measure.find_contours(mask, level=0.5)[0]
+
+            # Compute smallest enclosing circle
+            hull = ConvexHull(contour)
+            hull_points = contour[hull.vertices]  # Convex hull points
+
+            # Find the enclosing circle center and radius
+            x_max, y_max = np.max(hull_points, axis=0)
+            x_min, y_min = np.min(hull_points, axis=0)
+            encl_c = ((x_max + x_min) / 2, (y_max + y_min) / 2)
+            agg_jj['encl_c'] = (encl_c[1] + agg_jj['rect'][0], encl_c[0] + agg_jj['rect'][1])
+            agg_jj['encl_r'] = np.max(np.linalg.norm(hull_points - encl_c, axis=1))  # in pixels (to match center)
+            agg_jj['encl_d'] = 2 * agg_jj['encl_r'] * pixsize[ii]  # in nm
+            agg_jj['sphericity'] = agg_jj['da'] / agg_jj['encl_d']
+
+            # Compute perimeters. Currently, perimeter3 is used for output. 
             perimeter1 = np.sum(ndimage.binary_dilation(mask) - mask)
             perimeter3 = get_perimeter2(mask)
             agg_jj['perimeter'] = pixsize[ii] * max(perimeter1, perimeter3)
@@ -552,13 +562,12 @@ def gyration(img_binary, pixsize):
     total_area = np.count_nonzero(img_binary)  # total area [px^2]
 
     xpos, ypos = np.where(img_binary)  # position of each pixel
-    n_pix = xpos.size
 
     # Compute centroid.
-    centroid_x = np.mean(xpos)
-    centroid_y = np.mean(ypos)
+    cx = np.mean(xpos)
+    cy = np.mean(ypos)
 
-    Ar2 = (xpos - centroid_x) ** 2 + (ypos - centroid_y) ** 2  # distance to centroid
+    Ar2 = (xpos - cx) ** 2 + (ypos - cy) ** 2  # distance to centroid
     Rg = np.sqrt(np.sum(Ar2) / total_area) * pixsize
 
     return Rg
@@ -566,13 +575,13 @@ def gyration(img_binary, pixsize):
 
 def get_perimeter2(img_binary):
     # Find the contours of the binary image
-    contours = measure.find_contours(img_binary, 0.5)
+    contour = measure.find_contours(img_binary, 0.5)
     
-    if len(contours) == 0:
+    if len(contour) == 0:
         return 0  # No perimeter if no contours found
 
     # Assume the first contour is the perimeter we want
-    contour = contours[0]
+    contour = contour[0]
     x_mb, y_mb = contour[:, 1], contour[:, 0]
 
     # Group edges
