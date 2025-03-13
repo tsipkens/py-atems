@@ -8,8 +8,6 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch, Circle
 
 import cv2
-import pytesseract
-from pytesseract import Output
 
 from tkinter import Tk
 from tkinter.filedialog import askopenfilenames, askdirectory
@@ -193,26 +191,18 @@ def overlay_scale(pixsize, frac=0.2):
     plt.draw()
 
 
-def imshow_binary(img, img_binary, pixsize=None, opts=None):
+def imshow_binary(img, img_binary, alpha=0.3, outline=True, colors=[(1, 0, 0.5)], image_alpha=0.7):
     # Parse inputs
     if isinstance(img, list):
         img = img[0]
     if isinstance(img_binary, list):
         img_binary = img_binary[0]
 
-    if opts is None:
-        opts = {}
-
-    # Set default options
-    cmap = opts.get('cmap', np.ones((int(np.max(img_binary)), 3)) * [1, 0, 0.5])
-    f_outline = opts.get('f_outline', True)
-    label_alpha = opts.get('label_alpha', 0.25)
-
     # Overlay the binary mask on the image
     t0 = label(img_binary)
-    t0 = label2rgb(t0, image=img, alpha=label_alpha, bg_label=0, image_alpha=0.7)  # cmap=[cmap]
+    t0 = label2rgb(t0, image=img, alpha=alpha, bg_label=0, colors=colors, image_alpha=image_alpha)
 
-    if not f_outline:
+    if not outline:
         i1 = t0
     else:
         # Calculate edges using Sobel filter
@@ -230,7 +220,7 @@ def imshow_binary(img, img_binary, pixsize=None, opts=None):
     plt.axis('off')
 
 
-def imshow_binary2(imgs:list, imgs_binary:list, pixsizes:list=None, idx:list=None, *args):
+def imshow_binary2(imgs:list, imgs_binary:list, pixsizes:list=None, idx:list=None, **kwargs):
     
     if not idx == None:
         imgs = [imgs[ii] for ii in idx]
@@ -254,10 +244,7 @@ def imshow_binary2(imgs:list, imgs_binary:list, pixsizes:list=None, idx:list=Non
             plt.subplot(N1, N2, ii + 1)
             plt.title(str(ii))
         
-        if pixsizes is None:
-            i1 = imshow_binary(imgs[ii], imgs_binary[ii], *args)
-        else:
-            i1 = imshow_binary(imgs[ii], imgs_binary[ii], pixsizes[ii], *args)
+        _ = imshow_binary(imgs[ii], imgs_binary[ii], **kwargs)
 
 
 def imshow_beside(img, img_binary, *args):
@@ -273,7 +260,7 @@ def imshow_beside(img, img_binary, *args):
     imshow_binary(img, img_binary, *args)
 
 
-def imshow_agg(Aggs, imgs, imgs_binary, idx=None, f_img=True, opts=None):
+def imshow_agg(Aggs, imgs, imgs_binary, idx=None, f_img=True, **kwargs):
     # Parse inputs
     if np.any(idx == None):
         idx = np.unique(Aggs['img_id'])
@@ -323,7 +310,7 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None, f_img=True, opts=None):
             pixsize = Aggs[img_idx[0]]['pixsize'] if opts['f_scale'] else None
 
             # Display the image with binary overlay
-            imshow_binary(imgs[idx[ii]], img_binary, pixsize, opts)
+            imshow_binary(imgs[idx[ii]], img_binary, **kwargs)
             plt.title(str(idx[ii]))
         
         for agg_idx in img_idx:
@@ -338,15 +325,19 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None, f_img=True, opts=None):
             
             # Plot Rg and da.
             if opts['f_diam']:
-                plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), 
-                                           agg['Rg'] / agg['pixsize'], color=opts['cmap'], fill=False))
-                plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), 
-                                           agg['da'] / 2 / agg['pixsize'], color=np.array(opts['cmap']) * 0.25, fill=False, linewidth=1))
+                plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), agg['Rg'] / agg['pixsize'], 
+                                           color=opts['cmap'], fill=False, linewidth=0.5))
+                plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), agg['da'] / 2 / agg['pixsize'], 
+                                           color=np.array(opts['cmap']) * 0.25, fill=False, linewidth=0.5))
+                
+                # Add enclosing circle.
+                plt.gca().add_patch(Circle(agg['encl_c'], agg['encl_r'], 
+                                           color=np.array(opts['cmap']) * 0.25, fill=False, linewidth=0.5))
             
             # Plot primary particle diameter if present. 
             if opts['f_dp'] and hasattr(agg, 'dp') and not np.isnan(agg.dp):
                 plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), 
-                                           agg['dp'] / 2 / agg['pixsize'], color=[0.92, 0.16, 0.49], fill=False, linewidth=0.75))
+                                           agg['dp'] / 2 / agg['pixsize'], color=[0.92, 0.16, 0.49], fill=False, linewidth=0.5))
 
 
 #=========================================================================#
@@ -400,7 +391,7 @@ def load_imgs(fd=None, n=None):
 
     f_replace = 1
     try:
-        Imgs = detect_footer_scale(Imgs, f_replace)
+        Imgs = detect_footer_scale(Imgs, f_replace=True)
 
     except:
         print('Could not get pixel size.')
@@ -439,6 +430,10 @@ def detect_footer_scale(Imgs, f_replace):
             ii = row_idx
             img['cropped'] = raw[:ii, :]
             footer = raw[ii:, :]
+
+            # Import pytesseract if required to use OCR.
+            import pytesseract
+            from pytesseract import Output
 
             #-- Detecting magnification and/or pixel size ----------------#
             if pytesseract.pytesseract.get_tesseract_version():
