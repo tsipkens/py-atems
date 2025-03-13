@@ -18,15 +18,13 @@ from skimage.morphology import dilation, disk
 from skimage.measure import label, regionprops
 from skimage.color import label2rgb
 
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-
 from PIL import Image
 
 from tqdm import tqdm
 
 import json
 import yaml
-import os
+import os, csv
 import pickle
 import pandas as pd
 
@@ -260,7 +258,9 @@ def imshow_beside(img, img_binary, *args):
     imshow_binary(img, img_binary, *args)
 
 
-def imshow_agg(Aggs, imgs, imgs_binary, idx=None, f_img=True, **kwargs):
+def imshow_agg(Aggs, imgs, imgs_binary, idx=None, 
+               f_img=True, f_show=False, f_scale=False, f_text=True, f_diam=True, f_dp=True, f_encl=False,
+               c=[1, 0, 0.5], **kwargs):
     # Parse inputs
     if np.any(idx == None):
         idx = np.unique(Aggs['img_id'])
@@ -271,29 +271,19 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None, f_img=True, **kwargs):
         idx = idx[:24]
     n_img = len(idx)
 
-    if opts is None:
-        opts = {
-            'cmap': [1, 0, 0.5],
-            'f_text': True,
-            'f_show': False,
-            'f_dp': True,
-            'f_scale': False,
-            'f_diam': True,
-            'f_all': True
-        }
-
-    if n_img > 1 and not opts['f_show']:
+    if n_img > 1 and not f_show:
         plt.figure()
     else:
         plt.gcf()
 
-    if n_img > 1 and not opts['f_show']:
+    if n_img > 1 and not f_show:
         N1 = int(np.floor(np.sqrt(n_img)))
         N2 = int(np.ceil(n_img / N1))
         plt.subplot(N1, N2, 1)
 
-    for ii in range(n_img):
-        if n_img > 1 and not opts['f_show']:
+    print('Collecting images:')
+    for ii in tqdm(range(n_img)):
+        if n_img > 1 and not f_show:
             plt.subplot(N1, N2, ii + 1)
 
         # Determine aggregates to plot for this image
@@ -307,7 +297,7 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None, f_img=True, **kwargs):
             for agg_idx in img_idx:
                 img_binary = np.logical_or(img_binary, imgs_binary[idx[ii]])
             
-            pixsize = Aggs[img_idx[0]]['pixsize'] if opts['f_scale'] else None
+            pixsize = Aggs[img_idx[0]]['pixsize'] if f_scale else None
 
             # Display the image with binary overlay
             imshow_binary(imgs[idx[ii]], img_binary, **kwargs)
@@ -320,22 +310,23 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None, f_img=True, **kwargs):
             plt.plot(agg['center_mass'][1], agg['center_mass'][0], 'xk', linewidth=0.75)
 
             # Plot ID of the aggregate at CoM. 
-            if opts['f_text']:
+            if f_text:
                 plt.text(agg['center_mass'][1] + 20, agg['center_mass'][0], str(agg['id']), color='black', size='small')
             
             # Plot Rg and da.
-            if opts['f_diam']:
+            if f_diam:
                 plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), agg['Rg'] / agg['pixsize'], 
-                                           color=opts['cmap'], fill=False, linewidth=0.5))
+                                           color=c, fill=False, linewidth=0.5))
                 plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), agg['da'] / 2 / agg['pixsize'], 
-                                           color=np.array(opts['cmap']) * 0.25, fill=False, linewidth=0.5))
+                                           color=np.array(c) * 0.25, fill=False, linewidth=0.5))
                 
+            if f_encl:
                 # Add enclosing circle.
                 plt.gca().add_patch(Circle(agg['encl_c'], agg['encl_r'], 
-                                           color=np.array(opts['cmap']) * 0.25, fill=False, linewidth=0.5))
+                                        color=np.array(c) * 0.25, fill=False, linewidth=0.5))
             
             # Plot primary particle diameter if present. 
-            if opts['f_dp'] and hasattr(agg, 'dp') and not np.isnan(agg.dp):
+            if f_dp and hasattr(agg, 'dp') and not np.isnan(agg.dp):
                 plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), 
                                            agg['dp'] / 2 / agg['pixsize'], color=[0.92, 0.16, 0.49], fill=False, linewidth=0.5))
 
@@ -369,35 +360,48 @@ def load_imgs(fd=None, n=None):
     """
     print('Loading images:')
 
-    if fd is None:
-        fd = askopenfilenames(filetypes=[('Image files', '*.tif *.jpg *.png')])
-        if not fd:
+    if fd is None:  # load using a window
+        fns = askopenfilenames(filetypes=[('Image files', '*.tif *.jpg *.png')])
+        if not fns:
             raise ValueError('No image selected.')
-        fd = list(fd)
-    elif isinstance(fd, str) and os.path.isdir(fd):
-        fd = [os.path.join(fd, f) for f in os.listdir(fd) if f.lower().endswith(('.tif', '.jpg', '.png'))]
-    elif isinstance(fd, str) and fd.lower().startswith('http'):
-        fd = [fd]
+        fns = list(fns)
+
+    elif isinstance(fd, str) and os.path.isdir(fd):  # load all images in folder
+        fns = [os.path.join(fd, f) for f in os.listdir(fd) if f.lower().endswith(('.tif', '.jpg', '.png'))]
+
+    elif isinstance(fd, str) and fd.lower().startswith('http'):  # load from the web
+        fns = [fd]
 
     if np.any(n is None):
-        n = np.arange(len(fd))
+        n = np.arange(len(fns))
 
-    Imgs = [{'fname': fd[i]} for i in n]
+    Imgs = [{'fname': fns[i]} for i in n]
 
     for img in tqdm(Imgs):
         img['raw'] = cv2.imread(img['fname'], cv2.IMREAD_GRAYSCALE)
 
     print('Images loaded.\n')
 
-    f_replace = 1
-    try:
-        Imgs = detect_footer_scale(Imgs, f_replace=True)
+    # Consider using supplied pixsizes.csv in folder.
+    # Now default for test images. 
+    if os.path.exists(fd + '\\' + 'pixsizes.csv'):
+        pixsizes = pd.read_csv(fd + '\\' + 'pixsizes.csv', header=None).values[0]
+        print(pixsizes)
 
-    except:
-        print('Could not get pixel size.')
-        for img in Imgs:
+        for ii, img in enumerate(Imgs):
             img['cropped'] = img['raw']
-            img['pixsize'] = np.nan
+            img['pixsize'] = pixsizes[ii]
+
+    # Otherwise, go searching for footer using dedicated function and OCR.
+    else:
+        try:
+            Imgs = detect_footer_scale(Imgs)
+
+        except:
+            print('Could not get pixel size.')
+            for img in Imgs:
+                img['cropped'] = img['raw']
+                img['pixsize'] = np.nan
     
     imgs = [img['cropped'] for img in Imgs]
     pixsize = [img.get('pixsize', np.nan) for img in Imgs]
@@ -407,7 +411,7 @@ def load_imgs(fd=None, n=None):
     return imgs, pixsize, Imgs
 
 
-def detect_footer_scale(Imgs, f_replace):
+def detect_footer_scale(Imgs):
     print('Looking for footers/scale:')
 
     for img in tqdm(Imgs):
@@ -434,6 +438,7 @@ def detect_footer_scale(Imgs, f_replace):
             # Import pytesseract if required to use OCR.
             import pytesseract
             from pytesseract import Output
+            pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
             #-- Detecting magnification and/or pixel size ----------------#
             if pytesseract.pytesseract.get_tesseract_version():
@@ -720,17 +725,22 @@ def write_aggs(fname, Aggs):
     textdone()
 
 
-def write_images(fd, imgs):
+def write_images(fd, imgs, fnames=None):
     """
     Write images in imgs to folder.
     """
     if not os.path.exists(fd):  # create folder if necessary
         os.makedirs(fd)
 
+    if fnames == None:
+        fnames = ['' for _ in range(len(imgs))]
+        for ii in range(len(imgs)):
+            fnames[ii] = f"{fd}\\{str(ii).zfill(3)}.png"
+
     print('Writing images:')
     for ii in tqdm(range(len(imgs))):
         img = Image.fromarray(imgs[ii])
-        img.save(f"{fd}\\{str(ii).zfill(3)}.png")
+        img.save(fnames[ii])
     textdone()
 
 
