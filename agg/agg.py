@@ -444,7 +444,6 @@ def analyze_binary(imgs_binary, pixsize, imgs, fname=None, remove_edge_aggs=Fals
             np.count_nonzero(img_binary[-1, :]) / img_binary.shape[1]
         ]
         if any(x > 0.2 for x in nn):
-            print(ii)
             continue  # skip
 
         if remove_edge_aggs:
