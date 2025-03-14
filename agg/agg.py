@@ -1,5 +1,6 @@
 
 import numpy as np
+from numpy.lib.stride_tricks import as_strided
 
 import pandas as pd
 
@@ -443,6 +444,7 @@ def analyze_binary(imgs_binary, pixsize, imgs, fname=None, remove_edge_aggs=Fals
             np.count_nonzero(img_binary[-1, :]) / img_binary.shape[1]
         ]
         if any(x > 0.2 for x in nn):
+            print(ii)
             continue  # skip
 
         if remove_edge_aggs:
@@ -498,7 +500,7 @@ def analyze_binary(imgs_binary, pixsize, imgs, fname=None, remove_edge_aggs=Fals
             agg_jj['area'] = agg_jj['num_pixels'] * (pixsize[ii] ** 2)
 
             # Compute radius of gyration (Rg)
-            agg_jj['Rg'] = gyration(mask, pixsize[ii])
+            agg_jj['Rg'], _, _ = gyration(mask, pixsize[ii])
 
             # Get the contour
             contour = measure.find_contours(mask, level=0.5)[0]
@@ -523,6 +525,8 @@ def analyze_binary(imgs_binary, pixsize, imgs, fname=None, remove_edge_aggs=Fals
 
             agg_jj['circularity'] = 4 * np.pi * agg_jj['area'] / (agg_jj['perimeter'] ** 2)
             # agg_jj['compact_b'] = agg_jj['area'] / (np.pi * (agg_jj['lmax'] / 2) ** 2)
+
+            agg_jj['Df'] = box_counting(mask)
 
             # n = np.count_nonzero(mask)
             # p = np.sum(np.abs(mask[:, 1:] - mask[:, :-1])) + np.sum(np.abs(mask[1:, :] - mask[:-1, :]))
@@ -570,8 +574,7 @@ def gyration(img_binary, pixsize):
     Ar2 = (xpos - cx) ** 2 + (ypos - cy) ** 2  # distance to centroid
     Rg = np.sqrt(np.sum(Ar2) / total_area) * pixsize
 
-    return Rg
-
+    return Rg, xpos, ypos
 
 def get_perimeter2(img_binary):
     # Find the contours of the binary image
@@ -600,6 +603,41 @@ def get_perimeter2(img_binary):
     p_circ = np.sum(np.sqrt((xx_mb - np.roll(xx_mb, -1))**2 + (yy_mb - np.roll(yy_mb, -1))**2))
     
     return p_circ
+
+def box_counting(img_binary):
+    """
+    Performs box counting on a binary mask.
+
+    Args:
+        binary_mask: A 2D numpy array representing a binary mask (0s and 1s).
+        box_size: The size of the boxes (in pixels).
+
+    Returns:
+        The fractal dimension from the box counting method.
+    """
+    box_sizes = [2, 4, 6, 8]
+
+    height, width = img_binary.shape
+
+    # Not big enough for fractal dimension. 
+    # Will still be inaccurate near this limit.
+    if np.min([height, width]) < 10:
+        return np.nan
+
+    counts = np.zeros(len(box_sizes), dtype=int)  # Preallocate array
+    for idx, box_size in enumerate(box_sizes):
+        # Define strided view of the image for faster block checking
+        stride_view = as_strided(
+            img_binary,
+            shape=(height // box_size, width // box_size, box_size, box_size),
+            strides=(box_size * img_binary.strides[0], box_size * img_binary.strides[1], *img_binary.strides)
+        )
+        # Count the number of non-empty boxes
+        counts[idx] = np.sum(np.any(stride_view, axis=(2, 3)))
+    
+    # Fit a line to log-log data to estimate the slope (fractal dimension)
+    coeffs = np.polyfit(np.log(np.array(box_sizes)), np.log(counts), 1)
+    return -coeffs[0]  # Negative slope given Df
 
 
 # CROPPING AND IMAGE MAPPING ==============================================================#
@@ -640,7 +678,7 @@ def crop_agg(imgs, Aggs, idx=0):
     """
     Use rect in Agg to crop image.
     """
-    return crop(imgs[Aggs[idx].img_id], Aggs[idx].rect)
+    return crop(imgs[Aggs['img_id'][idx]], Aggs['rect'][idx])
 
 
 def get_binary(imgs_binary, Aggs, idx=0):
@@ -654,8 +692,8 @@ def get_binary(imgs_binary, Aggs, idx=0):
     Returns:
         ndarray: A binary mask of the same shape with only the selected object.
     """
-    mask = imgs_binary[Aggs[idx]['img_id']]  # index into imgs_binary
-    pixel = Aggs[idx]['first_pixel']  # get first_pixel, which will be used to identify the aggregate
+    mask = imgs_binary[Aggs['img_id'][idx]]  # index into imgs_binary
+    pixel = Aggs['first_pixel'][idx]  # get first_pixel, which will be used to identify the aggregate
 
     labeled_mask = label(mask)  # Label connected components
 
