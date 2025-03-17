@@ -8,7 +8,7 @@ import tools
 import agg, pp.pp as pp
 
 # Load images from the 'images' directory
-imgs, pixsizes, Imgs = tools.load_imgs('images')  # OPTION 3: load all images in 'images' folder
+imgs, pixsizes, fns, Imgs = tools.load_imgs('images')  # OPTION 3: load all images in 'images' folder
 
 # Run K-MEANS for all images
 imgs_binary, img_kmeans, feature_set = agg.seg_kmeans(imgs, pixsizes)

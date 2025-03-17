@@ -276,7 +276,7 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None,
         N2 = int(np.ceil(n_img / N1))
         plt.subplot(N1, N2, 1)
 
-    print('Collecting images:')
+    print('Collecting images for plotting:')
     for ii in tqdm(range(n_img)):
         if n_img > 1 and not f_show:
             plt.subplot(N1, N2, ii + 1)
@@ -402,7 +402,7 @@ def load_imgs(fd=None, n=None):
 
     print('Image import complete.\n')
 
-    return imgs, pixsize, Imgs
+    return imgs, pixsize, fns, Imgs
 
 
 def detect_footer_scale(Imgs):
@@ -563,7 +563,7 @@ def load_dm3(fd, n=None):
 
     textdone()
 
-    return imgs, pixsizes
+    return imgs, pixsizes, fns
 
 
 #=========================================================================#
