@@ -73,22 +73,21 @@ def pcm(Aggs, imgs_binary, f_plot=False, f_backup=False, opts=None):
         plt.figure()  # create figure for visualizing current aggregate
 
     # Main image processing loop
-    Aggs = Aggs.to_dict(orient='records')
+    # Aggs = Aggs.to_dict(orient='records')
 
-    n_aggs = len(Aggs)
     print('Performing PCM loop:')
     for aa in tqdm(range(len(Aggs))):
-        agg_aa = Aggs[aa]
+        agg_aa = Aggs.loc[aa].copy()
 
         pixsize = agg_aa['pixsize']
-        img_binary = agg.crop(imgs_binary[Aggs[aa]['img_id']], agg_aa['rect'])  # crop the binarized image
+        img_binary = agg.get_binary(imgs_binary, Aggs, idx=aa)  # crop the binarized image
 
         # Avoids error 
         img_binary = remove_small_holes(img_binary, area_threshold=100)
 
         if np.isnan(pixsize):
-            agg_aa['dp_pcm'] = np.nan
-            agg_aa['dp'] = agg_aa['dp_pcm']
+            agg_aa.loc['dp_pcm'] = np.nan
+            agg_aa.loc['dp'] = agg_aa['dp_pcm']
             continue
 
         # Step 3-3: Development of the pair correlation function (PCF)
@@ -178,17 +177,18 @@ def pcm(Aggs, imgs_binary, f_plot=False, f_backup=False, opts=None):
 
         # Get PCM diameter
         try:
-            agg_aa['dp_pcm'] = 2 * np.interp(pcf_0, pcf_smooth[::-1], r1[::-1])
+            agg_aa.loc['dp_pcm'] = 2 * np.interp(pcf_0, pcf_smooth[::-1], r1[::-1])
         except:
-            agg_aa['dp_pcm'] = np.nan
+            agg_aa.loc['dp_pcm'] = np.nan
 
         # Catch case where particle is small and nearly spherical
         if np.isnan(agg_aa['dp_pcm']) and agg_aa['num_pixels'] < 500 and agg_aa['aspect_ratio'] < 1.4:
-            agg_aa['dp_pcm'] = agg_aa['da']
+            agg_aa.loc['dp_pcm'] = agg_aa['da']
 
-        agg_aa['dp'] = agg_aa['dp_pcm']
+        # Assign back to master DataFrame.
+        Aggs.loc[aa, 'dp_pcm'] = agg_aa['dp_pcm']
+        Aggs.loc[aa, 'dp'] = agg_aa['dp_pcm']
 
-    Aggs = pd.DataFrame(Aggs)
     tools.textdone()
 
     return Aggs
@@ -216,8 +216,7 @@ def edm_sbs(Aggs, imgs_binary, pixsizes=None):
     """
 
     #-- Parse inputs ---------------------------------------------------------%
-    Aggs = Aggs.to_dict(orient='records')
-    pixsizes = np.array([agg['pixsize'] for agg in Aggs0])
+    pixsizes = Aggs['pixsize']
 
     # Extract or assign the pixel size for each aggregate
     if pixsizes is None:
@@ -233,10 +232,10 @@ def edm_sbs(Aggs, imgs_binary, pixsizes=None):
 
     #-- Main loop over binary images -----------------------------------------%
     print('Performing EDM-SBS loop:')
-    for aa in tqdm(range(len(imgs_binary))):
+    for aa in tqdm(range(len(Aggs))):
 
-        img_binary = Aggs0[aa].get('binary')
-        pixsize = Aggs0[aa].get('pixsize')
+        img_binary = agg.get_binary(imgs_binary, Aggs, idx=aa)  # crop the binarized image
+        pixsize = pixsizes[aa]
 
         #== STEP 1: Morphological opening of the binary image ================%
         se_max = 150
@@ -273,11 +272,11 @@ def edm_sbs(Aggs, imgs_binary, pixsizes=None):
         Sa_fit = sigmoid(x1)  # for diagnostic purposes only
 
         # Update Aggs dictionary
-        Aggs0[aa]['dp_edm'] = x1[0],  # geometric mean diameter for output
-        Aggs0[aa]['sg_edm'] = x1[1],  # geometric standard deviation for output
-        Aggs0[aa]['dp'] = x1[0]  # assign primary particle diameter based on dp_edm
-        Aggs0[aa]['dp_edm_tot'] = None
-        Aggs0[aa]['sg_edm_tot'] = None
+        Aggs.loc[aa, 'dp_edm'] = x1[0],  # geometric mean diameter for output
+        Aggs.loc[aa, 'sg_edm'] = x1[1],  # geometric standard deviation for output
+        Aggs.loc[aa, 'dp'] = x1[0]  # assign primary particle diameter based on dp_edm
+        Aggs.loc[aa, 'dp_edm_tot'] = None
+        Aggs.loc[aa, 'sg_edm_tot'] = None
 
         S += Sa  # add to accumulated S curve
 
@@ -290,13 +289,12 @@ def edm_sbs(Aggs, imgs_binary, pixsizes=None):
     S_fit = sigmoid(x1)
 
     # Store average dp and sg over the entire set of samples in the first entry of Aggs
-    Aggs0[0]['dp_edm_tot'] = x1[0]
-    Aggs0[0]['sg_edm_tot'] = x1[1]
+    Aggs.loc[0, 'dp_edm_tot'] = x1[0]
+    Aggs.loc[0, 'sg_edm_tot'] = x1[1]
     
-    Aggs = pd.DataFrame(Aggs)
     tools.textdone()
 
-    return Aggs0, dp_bin, S, S_fit
+    return Aggs, dp_bin, S, S_fit
 
 
 def hough_simple(Aggs, f_plot=1, opts=None):
