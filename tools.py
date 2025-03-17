@@ -63,18 +63,18 @@ def imshow(img, cmap=None, pixsize=None):
     if cmap is None:
         cmap = 'gray'
 
+    if pixsize is not None:
+        img = overlay_scale(img, pixsize)
+
     h = plt.imshow(img, cmap=cmap)  # Show image with colormap
     plt.axis('image')  # Adjust the axis to proper dimensions
     plt.xticks([])  # Remove x-ticks
     plt.yticks([])  # Remove y-ticks
 
-    if pixsize is not None:
-        overlay_scale(pixsize)
-
     return h
 
 
-def imshow2(imgs:list, cmap=None, n=None, pixsizes=None):
+def imshow2(imgs:list, n=None, pixsizes=None, **kwargs):
     """
     A wrapper for displaying multiple images using matplotlib.
 
@@ -96,23 +96,23 @@ def imshow2(imgs:list, cmap=None, n=None, pixsizes=None):
     """
 
     # Parse inputs
-    if cmap is None:
-        cmap = 'gray'  # default colormap
-    if pixsizes is None:
-        pixsizes = []
     if not isinstance(imgs, list):
         imgs = [imgs]
 
     # Incorporate indices of images to plot, if specified
     if n is None:
         n = list(range(len(imgs)))
-    imgs = [imgs[i] for i in n]
+    imgs = [imgs[ii] for ii in n]
 
     # Limit plotting to first 24 images
     if len(imgs) > 24:
         imgs = imgs[:24]
 
-    n_imgs = len(imgs)
+    n_imgs = len(imgs)  # number of images after above processing
+
+    # Create None list of pixsizes, if not given, to avoid error below.
+    if pixsizes is None:
+        pixsizes = list(None for _ in range(n_imgs))
 
     # If more than one image, prepare to tile and maximize figure
     if n_imgs > 1:
@@ -126,70 +126,57 @@ def imshow2(imgs:list, cmap=None, n=None, pixsizes=None):
         if n_imgs > 1:
             plt.subplot(N1, N2, ii + 1)
             plt.title(str(n[ii]))
-        imshow(imgs[ii], cmap=cmap)
+        imshow(imgs[ii], pixsize=pixsizes[ii], **kwargs)
 
 
-def overlay_scale(pixsize, frac=0.2):
-    # Get the current image
-    ax = plt.gca()
-    I = ax.get_images()[0].get_array()
+def overlay_scale(img, pixsize, frac=0.3):
+
+    img = img.copy()  # don't overwrite
 
     # Calculate bar length in pixels and nm
-    bar_length0 = int(np.floor(I.shape[1] * frac))  # in pixels
-    bar_length1 = round(pixsize * bar_length0)  # in nm
+    bar_length0 = int(np.floor(img.shape[1] * frac))  # in pixels, based on fraction (`frac`) of image size 
+    bar_length1 = round(pixsize * bar_length0)  # in nm, rounded for string operation below
 
     # Round up bar length if necessary
-    s1 = str(bar_length1)
+    s1 = str(bar_length1)  # convert to string for manipulation
     b1 = int(s1[0])  # first digit
+    if b1 > 5:  # do some rounding (closest 1, 2, or 5 up)
+        s1 = '0' + s1
+        b1 = 1
+    elif b1 > 2:
+        b1 = 5
+
     l1 = len(s1)  # length of number
-    if b1 > 5:
-        if b1 > 7:
-            bar_length1 = 10 ** l1
-        else:
-            bar_length1 = 5 * 10 ** (l1 - 1)
-    
-    bar_length1 = round(bar_length1, 1)  # round in nm
-    bar_length = bar_length1 / pixsize  # in pixels
+    bar_length = b1 * 10 ** (l1 - 1)  # use only first digit (rounded above) and order-of-magnitude
+    bar_length_px = int(bar_length / pixsize)  # in pixels
 
     # Properties for scale bar
-    margin = np.floor(np.array(I.shape[::-1]) * 0.05).astype(int)
-    bar_height = margin[1] // 5
-    font_props = {
-        'ha': 'right',
-        'va': 'bottom',
-        'fontsize': 11,
-        'weight': 'bold'
-    }
+    margin = np.floor(np.array(img.shape[0:2]) * 0.05).astype(int)  # margin away from edge of the image
+    bar_height = margin[1] // 5  # height of the bar
+    start_y, end_x = img.shape[1] - margin[1], img.shape[0] - margin[0]  # start positions for bar
 
-    # Draw the scale bar
-    ax.add_patch(FancyBboxPatch(
-        (I.shape[1] - margin[1] - bar_length, I.shape[0] - margin[0]),
-        bar_length, bar_height,
-        boxstyle="round,pad=0.1",
-        edgecolor='none',
-        facecolor='black'
-    ))
+    # Draw scale bar.
+    if img.ndim == 3:  # first, assign black color
+        color = [0, 0, 0]
+    else:
+        color = 0
+    img[start_y - bar_height:start_y, end_x - bar_length_px:end_x] = color  # bar
 
     # Add text label
-    if bar_length1 > 1e3:  # then use microns
-        ax.text(
-            I.shape[1] - margin[1],
-            I.shape[0] - margin[0] - bar_height / 5,
-            f'{bar_length1 / 1e3:.1f} µm',
-            **font_props
-        )
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = img.shape[0] / 650  # scale font and thickness as fraction of image size
+    thickness = max(1, int(font_scale * 2.5))
+    if bar_length >= 1e3:  # then use microns
+        cv2.putText(img, f'{int(bar_length / 1e3)} um', (end_x - bar_length_px, int(start_y - 2.5 * bar_height)), 
+                    font, font_scale, color, thickness, cv2.LINE_AA)
     else:
-        ax.text(
-            I.shape[1] - margin[1],
-            I.shape[0] - margin[0] - bar_height / 5,
-            f'{bar_length1} nm',
-            **font_props
-        )
+        cv2.putText(img, f'{bar_length} nm', (end_x - bar_length_px, int(start_y - 2.5 * bar_height)), 
+                    font, font_scale, color, thickness, cv2.LINE_AA)
 
-    plt.draw()
+    return img
 
 
-def imshow_binary(img, img_binary, alpha=0.3, outline=True, colors=[(1, 0, 0.5)], image_alpha=0.7):
+def imshow_binary(img, img_binary, pixsize=None, alpha=0.3, outline=True, colors=[(1, 0, 0.5)], image_alpha=0.7):
     # Parse inputs
     if isinstance(img, list):
         img = img[0]
@@ -212,6 +199,9 @@ def imshow_binary(img, img_binary, alpha=0.3, outline=True, colors=[(1, 0, 0.5)]
 
         # Add borders to labeled regions
         i1 = (~img_dilated[..., np.newaxis]) * t0
+    
+    if not pixsize is None:
+        i1 = overlay_scale(i1, pixsize)
 
     # Display the image
     plt.imshow(i1)
@@ -229,7 +219,12 @@ def imshow_binary2(imgs:list, imgs_binary:list, pixsizes:list=None, idx:list=Non
     if len(imgs) > 24:  # only plot up to 24 images
         imgs = imgs[:24]
         imgs_binary = imgs_binary[:24]
+
     n_imgs = len(imgs)  # number of images
+
+    # Create None list of pixsizes, if not given, to avoid error below.
+    if pixsizes is None:
+        pixsizes = list(None for _ in range(n_imgs))
 
     # Prepare to tile and maximize figure if more than one image
     if n_imgs > 1:
@@ -242,7 +237,7 @@ def imshow_binary2(imgs:list, imgs_binary:list, pixsizes:list=None, idx:list=Non
             plt.subplot(N1, N2, ii + 1)
             plt.title(str(ii))
         
-        _ = imshow_binary(imgs[ii], imgs_binary[ii], **kwargs)
+        _ = imshow_binary(imgs[ii], imgs_binary[ii], pixsize=pixsizes[ii], **kwargs)
 
 
 def imshow_beside(img, img_binary, *args):
@@ -386,7 +381,6 @@ def load_imgs(fd=None, n=None):
     # Now default for test images. 
     if os.path.exists(fd + '\\' + 'pixsizes.csv'):
         pixsizes = pd.read_csv(fd + '\\' + 'pixsizes.csv', header=None).values[0]
-        print(pixsizes)
 
         for ii, img in enumerate(Imgs):
             img['cropped'] = img['raw']
@@ -725,7 +719,7 @@ def write_aggs(fname, Aggs):
     textdone()
 
 
-def write_images(fd, imgs, fnames=None):
+def write_images(fd, imgs, pixsizes=None, fnames=None):
     """
     Write images in imgs to folder.
     """
@@ -737,6 +731,11 @@ def write_images(fd, imgs, fnames=None):
         for ii in range(len(imgs)):
             fnames[ii] = f"{fd}\\{str(ii).zfill(3)}.png"
 
+    # Add scale bar. 
+    if not pixsizes is None:
+        for ii in range(len(imgs)):
+            imgs[ii] = overlay_scale(imgs[ii], pixsizes[ii])
+
     print('Writing images:')
     for ii in tqdm(range(len(imgs))):
         img = Image.fromarray(imgs[ii])
@@ -744,16 +743,22 @@ def write_images(fd, imgs, fnames=None):
     textdone()
 
 
-def write_binary(fd, imgs, imgs_binary, ext='svg'):
+def write_binary(fd, imgs, imgs_binary, pixsizes=None, ext='svg', **kwargs):
     """
     Write binary masked images to folder.
     """
     if not os.path.exists(fd):  # create folder if necessary
         os.makedirs(fd)
 
-    print('Writing figures:')
-    for ii in tqdm(range(len(imgs))):
-        imshow_binary(imgs[ii], imgs_binary[ii])
+    n_imgs = len(imgs)  # number of images after above processing
+
+    # Create None list of pixsizes, if not given, to avoid error below.
+    if pixsizes is None:
+        pixsizes = list(None for _ in range(n_imgs))
+
+    print('Writing figures (w/ binary mask):')
+    for ii in tqdm(range(n_imgs)):
+        imshow_binary(imgs[ii], imgs_binary[ii], pixsize=pixsizes[ii], **kwargs)
         plt.savefig(f"{fd}\\{str(ii).zfill(3)}.{ext}")
         plt.clf()
     textdone()
