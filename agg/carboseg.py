@@ -151,9 +151,12 @@ def seg_cnn(imgs, pixsizes=None, opts=None):
     imgs = imgs.copy()
     sz = np.shape(imgs[1])
     for ii in range(len(imgs)):
-        imgs[ii] = Image.fromarray(imgs[ii])
+        imgs[ii] = Image.fromarray(imgs[ii].T)
         imgs[ii] = imgs[ii].resize((2240, 1952))
         imgs[ii] = np.array(imgs[ii])
+
+        import matplotlib.pyplot as plt
+        plt.imshow(imgs[0])
 
     classifier = Classifier()  # create an instance of the classifier
     imgs_binary = classifier.run(imgs)  # run the classifier to get predictions
@@ -175,6 +178,6 @@ def seg_cnn(imgs, pixsizes=None, opts=None):
             se7 = disk(max(ds - 1, 0))
             i7 = opening(i7, se7)
             
-            imgs_binary[ii] = remove_small_objects(i7, min_size=20)
+            imgs_binary[ii] = remove_small_objects(i7, min_size=20).T
 
     return imgs_binary

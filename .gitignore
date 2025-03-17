@@ -3,7 +3,8 @@ data_local/
 out/
 images/slider
 working/
-main_*
+main_x*
+main_test*
 tmp.py
 
 # Byte-compiled / optimized / DLL files
