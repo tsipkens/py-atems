@@ -235,11 +235,6 @@ def seg_kmeans(imgs:list, pixsizes:list, v:str='default'):
 
         img_binary[ii] = morphology.remove_small_objects(img_rb.astype(bool), opts['minsize'])
 
-    if n == 1:
-        img_binary = img_binary[0]
-        img_kmeans = img_kmeans[0]
-        feature_set = feature_set[0]
-
     tools.textdone()
 
     return img_binary, img_kmeans, feature_set
