@@ -689,11 +689,11 @@ def get_binary(imgs_binary, Aggs, idx=0):
     mask = imgs_binary[Aggs['img_id'][idx]]  # index into imgs_binary
     pixel = Aggs['first_pixel'][idx]  # get first_pixel, which will be used to identify the aggregate
 
-    labeled_mask = label(mask)  # Label connected components
+    labeled_mask = label(mask)  # label connected components
 
-    label_at_pixel = labeled_mask[pixel[0], pixel[1]]  # Access label using list index
+    label_at_pixel = labeled_mask[pixel[0], pixel[1]]  # access label using list index
 
     if label_at_pixel == 0:
-        return np.zeros_like(mask)  # Pixel is not inside any object
+        return np.zeros_like(mask)  # pixel is not inside any object
 
-    return (labeled_mask == label_at_pixel).astype(int)  # Return mask of the selected object
+    return (labeled_mask == label_at_pixel).astype(bool)  # return mask of the selected object
