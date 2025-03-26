@@ -674,6 +674,10 @@ def textdone():
     print('\r' +'\033[32m' + 'DONE!' + '\033[0m' + '\n')
 
 
+def textblue(txt):
+    print('\r' +'\033[34m' + str(txt) + '\033[0m' + '\n')
+
+
 #== SAVING AND LOAING DATA AND IMAGES ===================#
 def save_data(fname, data):
     """
