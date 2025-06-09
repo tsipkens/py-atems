@@ -547,7 +547,10 @@ def load_dm3(fd, n=None):
 
     # Loop through dm3 files.
     for ii in tqdm(range(len(n))):
-        dm3f = dm3.DM3(fd + "\\" + fns[n[ii]])
+        try:
+            dm3f = dm3.DM3(fd + "\\" + fns[n[ii]])
+        except:
+            pass  # skip this file
         pixsizes[ii] = dm3f.pxsize[0]
         if dm3f.pxsize[1] == 'micron':
             pixsizes[ii] = pixsizes[ii] * 1000
