@@ -665,7 +665,13 @@ def crop(img, rect, border=0):
     """
     Use rect to crop image.
     """
-    return img[rect[1]-border:rect[1]+rect[3]+border, rect[0]-border:rect[0]+rect[2]+border]
+    min1 = np.maximum(rect[1] - border, 0)
+    max1 = np.minimum(rect[1] + rect[3] + border, np.shape(img)[0])
+    
+    min2 = np.maximum(rect[0] - border, 0)
+    max2 = np.minimum(rect[0] + rect[2] + border, np.shape(img)[1])
+
+    return img[min1:max1, min2:max2]
 
 
 def crop_agg(imgs, Aggs, idx=0, **kwargs):
@@ -697,3 +703,31 @@ def get_binary(imgs_binary, Aggs, idx=0):
         return np.zeros_like(mask)  # pixel is not inside any object
 
     return (labeled_mask == label_at_pixel).astype(bool)  # return mask of the selected object
+
+
+def imshow(Aggs, imgs, imgs_binary, idx=0, border=25):
+    """
+    Show a masked version of a single aggregate. 
+    """
+    i0 = crop_agg(imgs, Aggs, idx=idx, border=25)
+    i1 = crop(get_binary(imgs_binary, Aggs, idx=idx), Aggs['rect'][idx], border=border)
+
+    tools.imshow_binary(i0, i1)
+
+    #== ADD RADIUS OF GYRATION ==#
+    Rg = Aggs['Rg'][idx] / Aggs['pixsize'][idx]
+    ra = Aggs['da'][idx] / 2 / Aggs['pixsize'][idx]
+    rect = Aggs['rect'][idx]
+    center = (Aggs['center_mass'][idx][1] - rect[0] + border, Aggs['center_mass'][idx][0] - rect[1] + border)
+
+    # Generate points.
+    theta = np.linspace(0, 2 * np.pi, 100)
+
+    # Plot circles.
+    x = center[0] + Rg * np.cos(theta)
+    y = center[1] + Rg * np.sin(theta)
+    plt.plot(x, y, '--', linewidth=3, color=[0.92, 0.16, 0.49])
+
+    x = center[0] + ra * np.cos(theta)
+    y = center[1] + ra * np.sin(theta)
+    plt.plot(x, y, '-', linewidth=3, color=[0.92, 0.16, 0.49])
