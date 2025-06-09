@@ -661,18 +661,18 @@ def autocrop(img_binary, img_orig=None):
         return rect, img_binary_cropped
     
 
-def crop(img, rect):
+def crop(img, rect, border=0):
     """
     Use rect to crop image.
     """
-    return img[rect[1]:rect[1]+rect[3], rect[0]:rect[0]+rect[2]]
+    return img[rect[1]-border:rect[1]+rect[3]+border, rect[0]-border:rect[0]+rect[2]+border]
 
 
-def crop_agg(imgs, Aggs, idx=0):
+def crop_agg(imgs, Aggs, idx=0, **kwargs):
     """
     Use rect in Agg to crop image.
     """
-    return crop(imgs[Aggs['img_id'][idx]], Aggs['rect'][idx])
+    return crop(imgs[Aggs['img_id'][idx]], Aggs['rect'][idx], **kwargs)
 
 
 def get_binary(imgs_binary, Aggs, idx=0):
