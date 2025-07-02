@@ -5,20 +5,23 @@ import scipy.stats as stats
 import scipy.optimize as op
 
 import matplotlib.pyplot as plt
-from matplotlib.patches import FancyBboxPatch, Circle
+from matplotlib.patches import FancyBboxPatch, Circle, Polygon, PathPatch
+from matplotlib.path import Path
+from matplotlib.collections import PatchCollection
+from matplotlib.colors import to_rgba
 
 import cv2
 
 from tkinter import Tk
 from tkinter.filedialog import askopenfilenames, askdirectory
 
-from skimage.segmentation import mark_boundaries
+from skimage import segmentation
 from skimage.filters import sobel
 from skimage.morphology import dilation, disk
-from skimage.measure import label, regionprops
+from skimage.measure import label, regionprops, find_contours
 from skimage.color import label2rgb
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from tqdm import tqdm
 
@@ -176,35 +179,44 @@ def overlay_scale(img, pixsize, frac=0.3):
     return img
 
 
-def imshow_binary(img, img_binary, pixsize=None, alpha=0.3, outline=True, colors=[(1, 0, 0.5)], image_alpha=0.7):
+def imshow_binary(img, img_binary, pixsize=None, alpha=0.2, outline=True, colors=[(1, 0, 0.5)], image_alpha=0.7):
     # Parse inputs
     if isinstance(img, list):
         img = img[0]
     if isinstance(img_binary, list):
         img_binary = img_binary[0]
 
-    # Overlay the binary mask on the image
-    t0 = label(img_binary)
-    t0 = label2rgb(t0, image=img, alpha=alpha, bg_label=0, colors=colors, image_alpha=image_alpha)
+    # Display the image
+    plt.imshow(img, cmap='gray', interpolation='none')
 
-    if not outline:
-        i1 = t0
-    else:
-        # Calculate edges using Sobel filter
-        img_edge = sobel(img_binary)
-
-        # Dilate edges to strengthen the outline
-        se = disk(1)
-        img_dilated = np.logical_or(np.logical_and(dilation(img_edge, se), ~img_binary), img_edge)
-
-        # Add borders to labeled regions
-        i1 = (~img_dilated[..., np.newaxis]) * t0
-    
     if not pixsize is None:
         i1 = overlay_scale(i1, pixsize)
+    
+    # Get labels for plotting.
+    labels = label(img_binary)
 
-    # Display the image
-    plt.imshow(i1)
+    # Classify contours as outer boundaries or holes using signed area
+    def signed_area(contour):
+        x = contour[:, 1]
+        y = contour[:, 0]
+        return 0.5 * np.sum(x[:-1]*y[1:] - x[1:]*y[:-1])
+
+
+    for region_label in np.unique(labels):
+        region_mask = labels == region_label
+        contours = find_contours(region_mask.astype(float), level=0.5)
+
+        # Separate outer and hole contours
+        patches = []
+        for contour in contours:
+            # Note: contour is (row, col); flip to (x, y)
+            polygon = Polygon(contour[:, [1, 0]])
+            patches.append(polygon)
+    
+        p = PatchCollection(patches, facecolor=to_rgba(colors[0], alpha=alpha), \
+                            edgecolor=to_rgba(colors[0], alpha=1), linewidths=0.5)
+        plt.gca().add_collection(p)
+
     plt.axis('off')
 
 
