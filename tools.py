@@ -5,21 +5,19 @@ import scipy.stats as stats
 import scipy.optimize as op
 
 import matplotlib.pyplot as plt
-from matplotlib.patches import FancyBboxPatch, Circle, Polygon, PathPatch
+from matplotlib.patches import Circle, PathPatch
 from matplotlib.path import Path
-from matplotlib.collections import PatchCollection
 from matplotlib.colors import to_rgba
 
 import cv2
 
 from tkinter import Tk
-from tkinter.filedialog import askopenfilenames, askdirectory
+from tkinter.filedialog import askopenfilenames
 
-from skimage import segmentation
-from skimage.filters import sobel
-from skimage.morphology import dilation, disk
-from skimage.measure import label, regionprops, find_contours
+from skimage.measure import label, find_contours
 from skimage.color import label2rgb
+
+from shapely.geometry import Polygon
 
 from PIL import Image, ImageDraw
 
@@ -194,28 +192,51 @@ def imshow_binary(img, img_binary, pixsize=None, alpha=0.2, outline=True, colors
     
     # Get labels for plotting.
     labels = label(img_binary)
+    mask = img_binary
+    image = Image.fromarray(img)
 
-    # Classify contours as outer boundaries or holes using signed area
-    def signed_area(contour):
-        x = contour[:, 1]
-        y = contour[:, 0]
-        return 0.5 * np.sum(x[:-1]*y[1:] - x[1:]*y[:-1])
+    # Step 1: Find all contours
+    contours = find_contours(mask, level=0.5)
+        
+    # Step 2: Separate outer and inner contours
+    outer_contours = []
+    hole_contours = []
 
+    for contour in contours:
+        y, x = np.mean(contour, axis=0)
+        if mask[int(y), int(x)] == 1:
+            outer_contours.append(contour)
+        else:
+            hole_contours.append(contour)
 
-    for region_label in np.unique(labels):
-        region_mask = labels == region_label
-        contours = find_contours(region_mask.astype(float), level=0.5)
+    # Step 3: Create a compound polygon using matplotlib Path
+    def contour_to_path(contour, code_type):
+        verts = [(x, y) for y, x in contour]
+        codes = [Path.MOVETO] + [code_type] * (len(verts) - 1)
+        return verts, codes
 
-        # Separate outer and hole contours
-        patches = []
-        for contour in contours:
-            # Note: contour is (row, col); flip to (x, y)
-            polygon = Polygon(contour[:, [1, 0]])
-            patches.append(polygon)
-    
-        p = PatchCollection(patches, facecolor=to_rgba(colors[0], alpha=alpha), \
-                            edgecolor=to_rgba(colors[0], alpha=1), linewidths=0.5)
-        plt.gca().add_collection(p)
+    vertices = []
+    codes = []
+
+    # Add outer boundary
+    for outer in outer_contours:
+        verts, cs = contour_to_path(outer, Path.LINETO)
+        vertices.extend(verts + [verts[0]])  # close path
+        codes.extend(cs + [Path.CLOSEPOLY])
+
+    # Add holes
+    for hole in hole_contours:
+        verts, cs = contour_to_path(hole, Path.LINETO)
+        vertices.extend(verts + [verts[0]])
+        codes.extend(cs + [Path.CLOSEPOLY])
+
+    # Create final compound path
+    compound_path = Path(vertices, codes)
+    patch = PathPatch(compound_path, 
+                      facecolor=to_rgba(colors[0], alpha=alpha), 
+                      edgecolor=colors[0], lw=0.5)
+
+    plt.gca().add_patch(patch)
 
     plt.axis('off')
 
