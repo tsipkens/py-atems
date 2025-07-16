@@ -15,11 +15,10 @@ from tkinter import Tk
 from tkinter.filedialog import askopenfilenames
 
 from skimage.measure import label, find_contours
-from skimage.color import label2rgb
 
 from shapely.geometry import Polygon
 
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from tqdm import tqdm
 
@@ -357,6 +356,12 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None,
             if f_dp and hasattr(agg, 'dp') and not np.isnan(agg.dp):
                 plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), 
                                            agg['dp'] / 2 / agg['pixsize'], color=[0.92, 0.16, 0.49], fill=False, linewidth=0.5))
+
+
+# Also, see agg.imshow(), which shows a cropped version of the aggregate.
+
+
+
 
 
 #=========================================================================#
@@ -799,6 +804,6 @@ def write_binary(fd, imgs, imgs_binary, pixsizes=None, ext='svg', **kwargs):
     print('Writing figures (w/ binary mask):')
     for ii in tqdm(range(n_imgs)):
         imshow_binary(imgs[ii], imgs_binary[ii], pixsize=pixsizes[ii], **kwargs)
-        plt.savefig(f"{fd}\\{str(ii).zfill(3)}.{ext}")
+        plt.savefig(f"{fd}\\{str(ii).zfill(3)}.{ext}", bbox_inches='tight')
         plt.clf()
     textdone()
