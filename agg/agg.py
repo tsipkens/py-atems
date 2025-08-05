@@ -2,18 +2,25 @@
 import numpy as np
 from numpy.lib.stride_tricks import as_strided
 
+import matplotlib.pyplot as plt
+
 import pandas as pd
+import tabulate  # only used for displaying Aggs structure
+
+from tqdm import tqdm
+import os
 
 import cv2
+from PIL import Image
 
 from scipy.optimize import curve_fit
 from scipy import ndimage
 from scipy.spatial import ConvexHull
 
+# skimage imports.
 from skimage import filters, measure, morphology
 from skimage.segmentation import clear_border
 from skimage.util import img_as_ubyte, invert
-from skimage.draw import polygon
 from skimage import measure, morphology, filters
 from skimage.measure import label, regionprops
 try:
@@ -21,18 +28,8 @@ try:
 except ImportError:
     from skimage.morphology import rectangle  # Older versions (pre-0.22)
 
-from tqdm import tqdm
-
-import os
-
-# import pandas as pd
-
+# Machine learning tools.
 from sklearn.cluster import KMeans
-
-import matplotlib.pyplot as plt
-
-from tqdm import tqdm
-import tabulate  # only used for displaying Aggs structure
 
 # Import custom modules.
 import tools
@@ -50,6 +47,134 @@ def show(Aggs):
     header = Aggs[0].keys()
     rows = [Agg.values() for Agg in Aggs]
     print(tabulate.tabulate(rows, header))
+
+
+
+# SEGMENTATION HELPERS ======================================================================#
+def rolling_ball(img_binary, pixsize, morphsc=0.8, minsize=1000):
+    """
+    A simple version of the rolling ball transform for binary masks
+    (in contrast to the double rolling ball transform below).
+
+    Applied to a single image (no looping).
+
+    Also removes small objects, after rolling ball.
+    """
+
+    morph_param = 0.8 / pixsize  # morphological scale parameter used several places below
+
+    ds = round(morphsc * morph_param)
+    se6 = morphology.disk(max(ds, 1))
+    i7 = cv2.morphologyEx(img_binary.astype(np.uint8), cv2.MORPH_CLOSE, se6)
+
+    se7 = morphology.disk(max(ds - 1, 0))
+    img_rb = cv2.morphologyEx(i7, cv2.MORPH_OPEN, se7)
+
+    img_binary = morphology.remove_small_objects(img_rb.astype(bool), minsize)
+
+    return img_binary
+
+
+def rolling_ball_double(img_binary, pixsize, minparticlesize=4.9, coeffs=None):
+    """
+    Perform a rolling ball transformation on a binary image.
+    
+    Parameters:
+        img_binary (np.ndarray): Binary image.
+        pixsize (float): Pixel size in nm/pixel.
+        minparticlesize (float, optional): Minimum particle size. Default is 4.9.
+        coeffs (list, optional): Coefficient matrix defining element sizes at different stages.
+    
+    Returns:
+        np.ndarray: Transformed binary image.
+    """
+    # Default coefficient matrix
+    coeff_matrix = np.array([
+        [0.2, 0.8, 0.4, 1.1, 0.4],
+        [0.2, 0.3, 0.7, 1.1, 1.8],
+        [0.3, 0.8, 0.5, 2.2, 3.5],
+        [0.1, 0.8, 0.4, 1.1, 0.5]
+    ])
+    
+    # Select coefficients based on pixsize
+    if coeffs is None:
+        if pixsize <= 0.181:
+            coeffs = coeff_matrix[0]
+        elif pixsize <= 0.361:
+            coeffs = coeff_matrix[1]
+        else:
+            coeffs = coeff_matrix[2]
+    
+    a, b, c, d, e = coeffs
+    
+    # Rolling ball transformations (morphological operations)
+    se = morphology.disk(round(a * minparticlesize / pixsize))
+    img_binary = morphology.closing(img_binary, se)
+    
+    se = morphology.disk(round(b * minparticlesize / pixsize))
+    img_binary = morphology.opening(img_binary, se)
+    
+    se = morphology.disk(round(c * minparticlesize / pixsize))
+    img_binary = morphology.closing(img_binary, se)
+    
+    se = morphology.disk(round(d * minparticlesize / pixsize))
+    img_binary = morphology.opening(img_binary, se)
+    
+    # Delete small blobs below threshold area size
+    labeled_img = label(np.abs(img_binary - 1))
+    regions = regionprops(labeled_img)
+    
+    nparts = len(regions)
+    mod = 10 if nparts > 50 else 1
+    
+    for region in regions:
+        area = region.area * pixsize ** 2
+        if area <= (mod * e * minparticlesize / pixsize) ** 2:
+            img_binary[labeled_img == region.label] = 1
+    
+    return img_binary
+
+
+def bg_subtract(img):
+    """
+    Subtracts the background from the image using a rolling ball transformation and polynomial fitting.
+    
+    Parameters:
+        img (np.ndarray): 2D numpy array representing the image.
+    
+    Returns:
+        img_out (np.ndarray): Image with background subtracted.
+        bg (np.ndarray): Background image (fit surface).
+    """
+
+    def poly22(xy, a, b, c, d, e, f):
+        x, y = xy
+        return a * x**2 + b * y**2 + c * x * y + d * x + e * y + f
+    
+    # -- Rolling ball transformation to determine the background --------------
+    se_bg = morphology.disk(80)
+    pre_bg = cv2.morphologyEx(img, cv2.MORPH_CLOSE, se_bg)
+    
+    # -- Fit surface ----------------------------------------------------------
+    X, Y = np.meshgrid(np.arange(img.shape[1]), np.arange(img.shape[0]))
+    X = X.flatten()
+    Y = Y.flatten()
+    Z = pre_bg.flatten()
+
+    # Fit polynomial surface of degree 2
+    params, _ = curve_fit(poly22, (X, Y), Z, p0=[1, 1, 1, 1, 1, 1])
+    
+    # Evaluate the fit surface
+    bg = poly22((X, Y), *params).reshape(img.shape)
+    
+    # Convert to uint8 and normalize
+    t0 = np.max(bg) - bg
+    t1 = img + t0
+    t2 = t1 - np.min(t1)
+    img_out = np.round(255 * t2 / np.max(t2)).astype(np.uint8)
+    
+    return img_out
+
 
 
 # SEGMENTATION METHODS ======================================================================#
@@ -123,7 +248,7 @@ def seg_kmeans(imgs:list, pixsizes:list, v:str='default'):
     img_kmeans = [None] * n
     feature_set = [None] * n
 
-    print(f'Performing k-means segmentation ({v}).')
+    print(f'Performing k-means segmentation (v. = {v}).')
     for ii in tqdm(range(n)):
         img = imgs[ii]
         pixsize = pixsizes[ii]
@@ -135,7 +260,7 @@ def seg_kmeans(imgs:list, pixsizes:list, v:str='default'):
         img_denoise = cv2.bilateralFilter(img, d=15, sigmaColor=650, sigmaSpace=1)
         
         # FEATURE 1: Entropy.
-        se = morphology.disk(round(5 * opts['morphsc']))
+        se = morphology.disk(max(round(5 * opts['morphsc']), 1))
         # se = morphology.disk(round(25 * morph_param * opts['morphsc']))  # updated in Python
         i10 = cv2.morphologyEx(img_denoise, cv2.MORPH_BLACKHAT, se)
 
@@ -155,7 +280,7 @@ def seg_kmeans(imgs:list, pixsizes:list, v:str='default'):
 
         # FEATURE 2: Adjusted Otsu.
         i1 = img_as_ubyte(img_denoise)
-        i1 = cv2.GaussianBlur(i1, (0,0), round(5 * morph_param), round(5 * morph_param))
+        i1 = cv2.GaussianBlur(i1, (0,0), max(round(5 * morph_param), 1), max(round(5 * morph_param), 1))
 
         lvl2 = filters.threshold_otsu(i1)
         i2a = i1 < lvl2
@@ -226,14 +351,16 @@ def seg_kmeans(imgs:list, pixsizes:list, v:str='default'):
         if np.mean(img[img_kmeans[ii] == 1]) > np.mean(img[img_kmeans[ii] == 0]):
             img_kmeans[ii] = 1 - img_kmeans[ii]
 
-        ds = round(opts['morphsc'] * morph_param)
-        se6 = morphology.disk(max(ds, 1))
-        i7 = cv2.morphologyEx(img_kmeans[ii].astype(np.uint8), cv2.MORPH_CLOSE, se6)
+        img_binary[ii] = rolling_ball(img_kmeans[ii], pixsize, opts['morphsc'], opts['minsize'])
 
-        se7 = morphology.disk(max(ds - 1, 0))
-        img_rb = cv2.morphologyEx(i7, cv2.MORPH_OPEN, se7)
+        # ds = round(opts['morphsc'] * morph_param)
+        # se6 = morphology.disk(max(ds, 1))
+        # i7 = cv2.morphologyEx(img_kmeans[ii].astype(np.uint8), cv2.MORPH_CLOSE, se6)
 
-        img_binary[ii] = morphology.remove_small_objects(img_rb.astype(bool), opts['minsize'])
+        # se7 = morphology.disk(max(ds - 1, 0))
+        # img_rb = cv2.morphologyEx(i7, cv2.MORPH_OPEN, se7)
+
+        # img_binary[ii] = morphology.remove_small_objects(img_rb.astype(bool), opts['minsize'])
 
     tools.textdone()
 
@@ -247,7 +374,7 @@ def seg_otsu(imgs, pixsizes=None, *args):
     Parameters:
         imgs (list or np.ndarray): A list of cropped images or a single image.
         pixsizes (list or float, optional): Pixel sizes in nm/pixel. Default is 1.
-        *args: Arguments to be passed to the rolling_ball operation.
+        *args: Arguments to be passed to the rolling_ball_double operation.
 
     Returns:
         list or np.ndarray: Binary mask(s).
@@ -279,7 +406,7 @@ def seg_otsu(imgs, pixsizes=None, *args):
         bw = img > level
 
         # Step 2: Rolling Ball Transformation
-        binary = rolling_ball(bw, pixsize, *args)
+        binary = rolling_ball_double(bw, pixsize, *args)
         img_binary.append(invert(binary))
     tools.textdone()
 
@@ -287,105 +414,149 @@ def seg_otsu(imgs, pixsizes=None, *args):
     return img_binary[0] if n == 1 else img_binary
 
 
-def bg_subtract(img):
+def seg_sam2(imgs, pixsizes=None, *args):
     """
-    Subtracts the background from the image using a rolling ball transformation and polynomial fitting.
-    
-    Parameters:
-        img (np.ndarray): 2D numpy array representing the image.
-    
-    Returns:
-        img_out (np.ndarray): Image with background subtracted.
-        bg (np.ndarray): Background image (fit surface).
+    Interface with SAM2 solver. Note that subprocesses are started to enable
+    the use of matplotlib in higher-level functions without crashing Jupyter. 
     """
 
-    def poly22(xy, a, b, c, d, e, f):
-        x, y = xy
-        return a * x**2 + b * y**2 + c * x * y + d * x + e * y + f
-    
-    # -- Rolling ball transformation to determine the background --------------
-    se_bg = morphology.disk(80)
-    pre_bg = cv2.morphologyEx(img, cv2.MORPH_CLOSE, se_bg)
-    
-    # -- Fit surface ----------------------------------------------------------
-    X, Y = np.meshgrid(np.arange(img.shape[1]), np.arange(img.shape[0]))
-    X = X.flatten()
-    Y = Y.flatten()
-    Z = pre_bg.flatten()
+    import pickle, io, subprocess
 
-    # Fit polynomial surface of degree 2
-    params, _ = curve_fit(poly22, (X, Y), Z, p0=[1, 1, 1, 1, 1, 1])
+    # Pickle the input into bytes
+    buffer = io.BytesIO()
+    pickle.dump(imgs, buffer)
+    buffer.seek(0)
+    binary_input = buffer.read()
+
+    # Create the subprocess. 
+    # See agg\\sam2_segmenter.py for more details.
+    print('Initiating subprocess for SAM2 ...')
+    process = subprocess.Popen(
+        ['python', f'{os.path.dirname(__file__)}\\sam2_segmenter.py'],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    # Communicate sends binary input and waits for the process to complete.
+    print('Running subprocess (this could take a while) ...')
+    stdout, stderr = process.communicate(input=binary_input)
     
-    # Evaluate the fit surface
-    bg = poly22((X, Y), *params).reshape(img.shape)
-    
-    # Convert to uint8 and normalize
-    t0 = np.max(bg) - bg
-    t1 = img + t0
-    t2 = t1 - np.min(t1)
-    img_out = np.round(255 * t2 / np.max(t2)).astype(np.uint8)
-    
-    return img_out
+    # Load binary masks that were pickled by subprocess.
+    print('Unpickling binary masks ...')
+    imgs_binary = pickle.loads(stdout)
+
+    tools.textdone()  # print green DONE! text
+
+    return imgs_binary
 
 
-def rolling_ball(img_binary, pixsize, minparticlesize=4.9, coeffs=None):
+def seg_carboseg(imgs, pixsizes=None, opts=None):
     """
-    Perform a rolling ball transformation on a binary image.
-    
-    Parameters:
-        img_binary (np.ndarray): Binary image.
-        pixsize (float): Pixel size in nm/pixel.
-        minparticlesize (float, optional): Minimum particle size. Default is 4.9.
-        coeffs (list, optional): Coefficient matrix defining element sizes at different stages.
-    
-    Returns:
-        np.ndarray: Transformed binary image.
+    Wrapper for creating instance of class of the carboseg Classifier and running.
+
+    Adds morphological rolling ball operation.
     """
-    # Default coefficient matrix
-    coeff_matrix = np.array([
-        [0.2, 0.8, 0.4, 1.1, 0.4],
-        [0.2, 0.3, 0.7, 1.1, 1.8],
-        [0.3, 0.8, 0.5, 2.2, 3.5],
-        [0.1, 0.8, 0.4, 1.1, 0.5]
-    ])
+
+    from agg.carboseg import Classifier  # import Classifier class
+
+    # Resize images to match classifier.
+    # This will results in some stretch and possibly changes in image texture.
+    imgs = imgs.copy()
     
-    # Select coefficients based on pixsize
-    if coeffs is None:
-        if pixsize <= 0.181:
-            coeffs = coeff_matrix[0]
-        elif pixsize <= 0.361:
-            coeffs = coeff_matrix[1]
-        else:
-            coeffs = coeff_matrix[2]
+    sz = np.shape(imgs[0])
+    for ii in range(len(imgs)):
+        imgs[ii] = Image.fromarray(imgs[ii].T)
+        imgs[ii] = imgs[ii].resize((2240, 1952))
+        imgs[ii] = np.array(imgs[ii])
+
+    classifier = Classifier()  # create an instance of the classifier
+    imgs_binary = classifier.run(imgs)  # run the classifier to get predictions
     
-    a, b, c, d, e = coeffs
-    
-    # Rolling ball transformations (morphological operations)
-    se = morphology.disk(round(a * minparticlesize / pixsize))
-    img_binary = morphology.closing(img_binary, se)
-    
-    se = morphology.disk(round(b * minparticlesize / pixsize))
-    img_binary = morphology.opening(img_binary, se)
-    
-    se = morphology.disk(round(c * minparticlesize / pixsize))
-    img_binary = morphology.closing(img_binary, se)
-    
-    se = morphology.disk(round(d * minparticlesize / pixsize))
-    img_binary = morphology.opening(img_binary, se)
-    
-    # Delete small blobs below threshold area size
-    labeled_img = label(np.abs(img_binary - 1))
-    regions = regionprops(labeled_img)
-    
-    nparts = len(regions)
-    mod = 10 if nparts > 50 else 1
-    
-    for region in regions:
-        area = region.area * pixsize ** 2
-        if area <= (mod * e * minparticlesize / pixsize) ** 2:
-            img_binary[labeled_img == region.label] = 1
-    
-    return img_binary
+    # Resize back to original size for output.
+    for ii in range(len(imgs_binary)):
+        imgs_binary[ii] = Image.fromarray(imgs_binary[ii])
+        imgs_binary[ii] = imgs_binary[ii].resize(sz)
+        imgs_binary[ii] = np.array(imgs_binary[ii])
+
+        # Add rolling ball operation.
+        if not pixsizes[ii] == None:
+            imgs_binary[ii] = rolling_ball(imgs_binary[ii], pixsizes[ii], 0.8, 20).T
+            
+            # morph_param = 0.8 / pixsizes[ii]
+            # ds = max(round(4 * morph_param), 1)
+            
+            # se6 = disk(ds)
+            # i7 = closing(imgs_binary[ii], se6)
+            
+            # se7 = disk(max(ds - 1, 0))
+            # i7 = opening(i7, se7)
+            
+            # imgs_binary[ii] = remove_small_objects(i7, min_size=20).T
+
+    tools.textdone()  # print green DONE! text
+
+    return imgs_binary
+
+
+def seg_circles(imgs, pixsizes=None, maxRadius=200):
+
+    n = len(imgs)
+    imgs_binary = [None] * n
+
+    print("Performing circles segmentation:")
+    for ii in tqdm(range(n)):
+        img = imgs[ii]
+
+        imgs_binary[ii] = np.zeros(img.shape, dtype=bool)  # initialize binary mask
+
+        img = cv2.medianBlur(img, 7)  # blur image to avoid noisy background
+
+        _, otsu = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        img = cv2.bitwise_not(img)  # invert image
+        
+        # bg = np.median(img)  # used to filter out bright circles below
+        # bg = cv2.mean(img, mask=~otsu)[0]
+
+        # Detect circles using HoughCircles
+        kwargs = {
+            'dp': 1.9,             # inverse accumulator resolution
+            'minDist': 60,         # minimum distance between circle centers
+            'param1': 70,          # upper threshold for Canny edge detector
+            'param2': 55,          # threshold for center detection
+            'minRadius': 20,       # minimum radius to be detected
+            'maxRadius': 200       # maximum radius to be detected
+        }
+        circles = cv2.HoughCircles(img, cv2.HOUGH_GRADIENT, **kwargs)
+
+        if circles is not None:
+            circles = np.uint16(np.around(circles))
+
+            for (x, y, r) in circles[0, :]:
+                # Create mask for the circle
+                mask = np.zeros(img.shape, dtype=np.uint8)
+                cv2.circle(mask, (x, y), r, 1, thickness=-1)
+                mask = mask.astype(bool)
+
+                # Compute average grayscale intensity
+                od = np.percentile(img[mask], 30)
+
+                # Get immediate background around circle.
+                # Works better than global background for lacey grids.
+                mask_bg = np.zeros(img.shape, dtype=np.uint8)
+                cv2.circle(mask_bg, (x, y), r+10, 1, thickness=-1)
+                mask_bg = mask_bg.astype(bool)
+                mask_bg = np.logical_and(mask_bg, ~mask)
+                bg = np.mean(img[mask_bg])
+
+                # Only keep circle if it's darker than threshold
+                if od > 1.05 * bg:  # only get dark (bright after inversion) circles (use 0.98 for Otsu background)
+                    imgs_binary[ii] = np.logical_or(imgs_binary[ii], mask)  # add to mask
+
+    tools.textdone()  # print green DONE! text
+
+    return imgs_binary
 
 
 # BINARY ANALYSIS METHODS =================================================================#
@@ -422,7 +593,7 @@ def analyze_binary(imgs_binary, pixsize, imgs, fname=None, remove_edge_aggs=Fals
     Aggs = []  # Initialize Aggs structure
     id = 0  # start aggregate index at 0
 
-    print("Analyzing binaries:")
+    print("Analyzing binary masks:")
     for ii in tqdm(range(len(imgs_binary))):  # loop through provided images
         img_binary = imgs_binary[ii]
 

@@ -194,59 +194,64 @@ def imshow_binary(img, img_binary, pixsize=None, alpha=0.2, outline=True, colors
     mask = img_binary
     image = Image.fromarray(img)
 
-    # Step 1: Find all contours
-    contours = find_contours(mask, level=0.5)
-        
-    # Step 2: Separate outer and inner contours
-    outer_contours = []
-    hole_contours = []
+    if np.any(mask):  # check if mask to plot (if no particles, would error)
 
-    for contour in contours:
-        y, x = np.mean(contour, axis=0)
-        if mask[int(y), int(x)] == 1:
-            outer_contours.append(contour)
-        else:
-            hole_contours.append(contour)
+        # Step 1: Find all contours
+        contours = find_contours(mask, level=0.5)
+            
+        # Step 2: Separate outer and inner contours
+        outer_contours = []
+        hole_contours = []
 
-    # Step 3: Create a compound polygon using matplotlib Path
-    def contour_to_path(contour, code_type):
-        verts = [(x, y) for y, x in contour]
-        codes = [Path.MOVETO] + [code_type] * (len(verts) - 1)
-        return verts, codes
+        for contour in contours:
+            y, x = np.mean(contour, axis=0)
+            if mask[int(y), int(x)] == 1:
+                outer_contours.append(contour)
+            else:
+                hole_contours.append(contour)
 
-    vertices = []
-    codes = []
+        # Step 3: Create a compound polygon using matplotlib Path
+        def contour_to_path(contour, code_type):
+            verts = [(x, y) for y, x in contour]
+            codes = [Path.MOVETO] + [code_type] * (len(verts) - 1)
+            return verts, codes
 
-    # Add outer boundary
-    for outer in outer_contours:
-        verts, cs = contour_to_path(outer, Path.LINETO)
-        vertices.extend(verts + [verts[0]])  # close path
-        codes.extend(cs + [Path.CLOSEPOLY])
+        vertices = []
+        codes = []
 
-    # Add holes
-    for hole in hole_contours:
-        verts, cs = contour_to_path(hole, Path.LINETO)
-        vertices.extend(verts + [verts[0]])
-        codes.extend(cs + [Path.CLOSEPOLY])
+        # Add outer boundary
+        for outer in outer_contours:
+            verts, cs = contour_to_path(outer, Path.LINETO)
+            vertices.extend(verts + [verts[0]])  # close path
+            codes.extend(cs + [Path.CLOSEPOLY])
 
-    # Create final compound path
-    compound_path = Path(vertices, codes)
-    patch = PathPatch(compound_path, 
-                      facecolor=to_rgba(colors[0], alpha=alpha), 
-                      edgecolor=colors[0], lw=0.5)
+        # Add holes
+        for hole in hole_contours:
+            verts, cs = contour_to_path(hole, Path.LINETO)
+            vertices.extend(verts + [verts[0]])
+            codes.extend(cs + [Path.CLOSEPOLY])
 
-    plt.gca().add_patch(patch)
+        # Create final compound path
+        compound_path = Path(vertices, codes)
+        patch = PathPatch(compound_path, 
+                        facecolor=to_rgba(colors[0], alpha=alpha), 
+                        edgecolor=colors[0], lw=0.5)
+
+        plt.gca().add_patch(patch)
 
     plt.axis('off')
 
 
 def imshow_binary2(imgs:list, imgs_binary:list, pixsizes:list=None, idx:list=None, **kwargs):
     
-    if not idx == None:
+    if not idx is None:
         imgs = [imgs[ii] for ii in idx]
         imgs_binary = [imgs_binary[ii] for ii in idx]
         if not pixsizes == None:
             pixsizes = [pixsizes[ii] for ii in idx]
+
+    else:
+        idx = np.arange(len(imgs))
 
     if len(imgs) > 24:  # only plot up to 24 images
         imgs = imgs[:24]
@@ -264,10 +269,11 @@ def imshow_binary2(imgs:list, imgs_binary:list, pixsizes:list=None, idx:list=Non
         N1 = int(np.floor(np.sqrt(n_imgs)))
         N2 = int(np.ceil(n_imgs / N1))
     
+    plt.figure(figsize=(12, 12*N1/N2*1.1))
     for ii in range(n_imgs):
         if n_imgs > 1:
             plt.subplot(N1, N2, ii + 1)
-            plt.title(str(ii))
+            plt.title(str(idx[ii]))
         
         _ = imshow_binary(imgs[ii], imgs_binary[ii], pixsize=pixsizes[ii], **kwargs)
 
@@ -359,8 +365,6 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None,
 
 
 # Also, see agg.imshow(), which shows a cropped version of the aggregate.
-
-
 
 
 
@@ -807,3 +811,16 @@ def write_binary(fd, imgs, imgs_binary, pixsizes=None, ext='svg', **kwargs):
         plt.savefig(f"{fd}\\{str(ii).zfill(3)}.{ext}", bbox_inches='tight')
         plt.clf()
     textdone()
+
+
+def dm32img(fd, n, ext):
+    '''
+    Convert DM3 files to images.
+    '''
+
+    imgs, pixsizes, fns = load_dm3(fd, n=None)
+
+    for ii in range(len(imgs)):
+        cv2.imwrite(f'{fns[ii]}.{ext}', imgs[ii])
+
+
