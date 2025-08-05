@@ -6,11 +6,10 @@ import os
 import numpy as np
 
 import albumentations as albu
-import onnxruntime as rt
+import onnxruntime as ort
 
 from PIL import Image
 
-import cv2
 from skimage.morphology import disk, closing, opening, remove_small_objects
 
 from tqdm import tqdm
@@ -27,7 +26,7 @@ class Classifier:
 
         self.checkpoint_path = Path(__file__).parent / "config\\FPN-resnet50-imagenet.onnx"
 
-        self.onnx_session = rt.InferenceSession(str(self.checkpoint_path))
+        self.onnx_session = ort.InferenceSession(str(self.checkpoint_path))
         self.input_name = self.onnx_session.get_inputs()[0].name
 
     @staticmethod
@@ -139,45 +138,3 @@ class Classifier:
             Image.fromarray(predictions[ii]).save(folder + os.path.sep + os.path.basename(image_paths[ii]))
 
         print("Images saved.")
-
-
-def seg_cnn(imgs, pixsizes=None, opts=None):
-    """
-    Wrapper for creating instance of class and running.
-    """
-
-    # Resize images to match classifier.
-    # This will results in some stretch and possibly changes in image texture.
-    imgs = imgs.copy()
-    sz = np.shape(imgs[1])
-    for ii in range(len(imgs)):
-        imgs[ii] = Image.fromarray(imgs[ii].T)
-        imgs[ii] = imgs[ii].resize((2240, 1952))
-        imgs[ii] = np.array(imgs[ii])
-
-        import matplotlib.pyplot as plt
-        plt.imshow(imgs[0])
-
-    classifier = Classifier()  # create an instance of the classifier
-    imgs_binary = classifier.run(imgs)  # run the classifier to get predictions
-    
-    # Resize back to original size for output.
-    for ii in range(len(imgs_binary)):
-        imgs_binary[ii] = Image.fromarray(imgs_binary[ii])
-        imgs_binary[ii] = imgs_binary[ii].resize(sz)
-        imgs_binary[ii] = np.array(imgs_binary[ii])
-
-        # Add rolling ball operation.
-        if not np.all(pixsizes == None):
-            morph_param = 0.8 / pixsizes[ii]
-            ds = max(round(4 * morph_param), 1)
-            
-            se6 = disk(ds)
-            i7 = closing(imgs_binary[ii], se6)
-            
-            se7 = disk(max(ds - 1, 0))
-            i7 = opening(i7, se7)
-            
-            imgs_binary[ii] = remove_small_objects(i7, min_size=20).T
-
-    return imgs_binary
