@@ -7,6 +7,10 @@ main_x*
 main_test*
 tmp.py
 
+# Ignore local copy of SAM2. 
+sam2/
+checkpoints/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -168,3 +172,5 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 agg/config/FPN-resnet50-imagenet.onnx
+resnet50_simplified.onnx
+agg/config/FPN-resnet50-imagenet-cuda.onnx
