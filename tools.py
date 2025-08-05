@@ -368,6 +368,8 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None,
 
 
 
+
+
 #=========================================================================#
 #== UTILITIES TO LOAD IMAGES =============================================#
 #=========================================================================#
@@ -813,14 +815,40 @@ def write_binary(fd, imgs, imgs_binary, pixsizes=None, ext='svg', **kwargs):
     textdone()
 
 
-def dm32img(fd, n, ext):
+def dm32img(fd, n=None, ext='png'):
     '''
     Convert DM3 files to images.
     '''
 
-    imgs, pixsizes, fns = load_dm3(fd, n=None)
+    imgs, pixsizes, fns = load_dm3(fd, n)
 
-    for ii in range(len(imgs)):
-        cv2.imwrite(f'{fns[ii]}.{ext}', imgs[ii])
+    print('Writing images:')
+    for ii in tqdm(range(len(imgs))):
+        cv2.imwrite(f'{fd}\\{fns[ii]}.{ext}', imgs[ii])
+    textdone()
 
+
+def match(Aggs1, Aggs2, tol=20):
+    """
+    Match aggregates in Aggs1 to those in Aggs2 based on center of mass.
+    tol is the tolerance in pixels for matching.
+    """
+
+    idx = []
+
+    for ii in range(len(Aggs1)):
+        agg1 = Aggs1.loc[ii]
+        img_id = agg1['img_id']
+        agg2 = Aggs2[Aggs2['img_id'] == img_id]
+
+        if len(agg2) == 0:
+            continue
+        
+        d = np.linalg.norm(np.stack(agg2['center_mass'].to_numpy()) - np.array(agg1['center_mass']), axis=1)
+        j = np.argmin(d)
+
+        if d[j] < tol:  # based on center-of-mass distance
+            idx.append((ii, agg2.index[j]))
+
+    return idx
 
