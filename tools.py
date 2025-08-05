@@ -11,12 +11,9 @@ from matplotlib.colors import to_rgba
 
 import cv2
 
-from tkinter import Tk
 from tkinter.filedialog import askopenfilenames
 
 from skimage.measure import label, find_contours
-
-from shapely.geometry import Polygon
 
 from PIL import Image
 
