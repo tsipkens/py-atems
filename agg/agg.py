@@ -902,3 +902,40 @@ def imshow(Aggs, imgs, imgs_binary, idx=0, border=25):
     x = center[0] + ra * np.cos(theta)
     y = center[1] + ra * np.sin(theta)
     plt.plot(x, y, '-', linewidth=3, color=[0.92, 0.16, 0.49])
+
+
+def match(Aggs1, Aggs2, tol=20):
+    """
+    Match aggregates in Aggs1 to those in Aggs2 based on center of mass.
+    tol is the tolerance in pixels for matching.
+    """
+
+    idx = []
+
+    for ii in range(len(Aggs1)):
+        agg1 = Aggs1.loc[ii]
+        img_id = agg1['img_id']
+        agg2 = Aggs2[Aggs2['img_id'] == img_id]
+
+        if len(agg2) == 0:
+            continue
+        
+        d = np.linalg.norm(np.stack(agg2['center_mass'].to_numpy()) - np.array(agg1['center_mass']), axis=1)
+        j = np.argmin(d)
+
+        if d[j] < tol:  # based on center-of-mass distance
+            idx.append((ii, agg2.index[j]))
+
+    return idx
+
+
+def overlap(idx, Aggs1, Aggs2, binary1, binary2):
+
+    overlap = np.zeros(len(idx))
+    for ii in range(len(idx)):
+        i1 = get_binary(binary1, Aggs1, idx[ii][0])
+        i2 = get_binary(binary2, Aggs2, idx[ii][1])
+        
+        overlap[ii] = np.sum(np.logical_and(i1, i2)) / np.sum(np.logical_or(i1, i2))
+
+    return overlap
