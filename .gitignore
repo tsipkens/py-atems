@@ -6,6 +6,7 @@ working/
 main_x*
 main_test*
 tmp.py
+docs/CODE_figs.pptx
 
 # Ignore local copy of SAM2. 
 sam2/

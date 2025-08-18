@@ -6,13 +6,13 @@
 
 ------
 
-A python codebase to analyze TEM images of soot, which includes new methods associated with this project and a compilation of other pre-existing methods into a single Python package. The original implementation was a port of previous MATLAB code (https://github.com/tsipkens/atems), as also described in [Sipkens et al. (2023)][joss1]. 
+A python codebase to analyze TEM images of soot, which includes new methods associated with this project and a compilation of other pre-existing methods into a single Python package. The original implementation was a port of previous MATLAB code (https://github.com/tsipkens/atems), which was described by [Sipkens et al. (2023)][joss1]. 
 
 
 
 
 
-# Back matter
+------
 
 #### License
 
@@ -22,7 +22,7 @@ This software is released under a GNU GENERAL PUBLIC LICENSE license (see the co
 
 This code was primarily compiled by Timothy A. Sipkens. 
 
-This work was supported by Dr. Steven Rogak ([rogak@mech.ubc.ca](mailto:rogak@mech.ubc.ca)). Other direct contributors include [Hamed Nikookar](https://github.com/Hamed-NKR) and [Darwin Zhu](https://github.com/darwinz7). Pieces of this code were adapted from various sources and features snippets written by several individuals at UBC, including [Ramin Dastanpour](https://github.com/rdastanpour), [Una Trivanovic](https://github.com/unatriva), Alberto Baldelli, Yiling Kang, Yeshun (Samuel) Ma, and Steven Rogak, among others.
+This work was supported by Dr. Steven Rogak. Other direct contributors include [Hamed Nikookar](https://github.com/Hamed-NKR) and [Darwin Zhu](https://github.com/darwinz7). Pieces of this code were adapted from various sources and features snippets written by several individuals at UBC, including [Ramin Dastanpour](https://github.com/rdastanpour), [Una Trivanovic](https://github.com/unatriva), Alberto Baldelli, Yiling Kang, Yeshun (Samuel) Ma, and Steven Rogak, among others.
 
 This program contains very significantly modified versions of the code distributed with [Dastanpour et al. (2016)][dastanpour2016]. The most recent version of the Dastanpour et al. code prior to this overhaul is available at https://github.com/unatriva/UBC-PCM (which itself presents a minor update from the original). That code forms the basis for some of the methods underlying the manual processing and the PCM method used in this code, as noted in the README above. However, significant optimizations have improved code legibility, performance, and maintainability (e.g., the code no longer uses global variables). 
 
