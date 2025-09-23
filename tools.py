@@ -180,11 +180,11 @@ def imshow_binary(img, img_binary, pixsize=None, alpha=0.2, outline=True, colors
     if isinstance(img_binary, list):
         img_binary = img_binary[0]
 
+    if pixsize is not None:
+        img = overlay_scale(img, pixsize)
+
     # Display the image
     plt.imshow(img, cmap='gray', interpolation='none')
-
-    if not pixsize is None:
-        i1 = overlay_scale(i1, pixsize)
     
     # Get labels for plotting.
     labels = label(img_binary)
