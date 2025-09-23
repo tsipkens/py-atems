@@ -8,9 +8,14 @@ main_test*
 tmp.py
 docs/CODE_figs.pptx
 
-# Ignore local copy of SAM2. 
+# Ignore local copy of SAM2
 sam2/
 checkpoints/
+
+# VS Code
+.vscode/
+.history/
+*.code-workspace
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
