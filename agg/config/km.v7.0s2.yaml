@@ -1,0 +1,5 @@
+lvl3: 'np.linspace(0.8, 1.35, 140)'
+lvl5: 0.1
+lvlfun: 'lin'
+morphsc: 2
+minsize: 20

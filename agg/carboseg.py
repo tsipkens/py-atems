@@ -6,8 +6,11 @@ import os
 import numpy as np
 
 import albumentations as albu
-import onnxruntime as rt
+import onnxruntime as ort
+
 from PIL import Image
+
+from skimage.morphology import disk, closing, opening, remove_small_objects
 
 from tqdm import tqdm
 
@@ -23,7 +26,7 @@ class Classifier:
 
         self.checkpoint_path = Path(__file__).parent / "config\\FPN-resnet50-imagenet.onnx"
 
-        self.onnx_session = rt.InferenceSession(str(self.checkpoint_path))
+        self.onnx_session = ort.InferenceSession(str(self.checkpoint_path))
         self.input_name = self.onnx_session.get_inputs()[0].name
 
     @staticmethod
@@ -118,11 +121,11 @@ class Classifier:
         predictions = [None] * len(imgs)  # initialize the predictions list
 
         # Loop through images and generate predictions.
-        print("Classifying images:")
+        print("Performing carboseg segmentation:")
         for ii in tqdm(range(len(imgs)), bar_format="{l_bar}{bar:15}{r_bar}{bar:-15b}"):
             img = Image.fromarray(imgs[ii]).convert("RGB")  # read in image
             predictions[ii] = self.classify_image(img)  # run classifier on image
-        print("Finished classifying.\n")
+        print("DONE.\n")
 
         return predictions
 
@@ -135,29 +138,3 @@ class Classifier:
             Image.fromarray(predictions[ii]).save(folder + os.path.sep + os.path.basename(image_paths[ii]))
 
         print("Images saved.")
-
-
-def seg_cnn(imgs, pixsizes=None, opts=None):
-    """
-    Wrapper for creating instance of class and running.
-    """
-
-    # Resize images to match classifier.
-    # This will results in some stretch and possibly changes in image texture.
-    imgs = imgs.copy()
-    sz = np.shape(imgs[1])
-    for ii in range(len(imgs)):
-        imgs[ii] = Image.fromarray(imgs[ii])
-        imgs[ii] = imgs[ii].resize((2240, 1952))
-        imgs[ii] = np.array(imgs[ii])
-
-    classifier = Classifier()  # create an instance of the classifier
-    imgs_binary = classifier.run(imgs)  # run the classifier to get predictions
-    
-    # Resize back to original size for output.
-    for ii in range(len(imgs_binary)):
-        imgs_binary[ii] = Image.fromarray(imgs_binary[ii])
-        imgs_binary[ii] = imgs_binary[ii].resize(sz)
-        imgs_binary[ii] = np.array(imgs_binary[ii])
-
-    return imgs_binary

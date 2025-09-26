@@ -1,41 +1,184 @@
 
 import numpy as np
-import cv2
-
-from scipy.optimize import curve_fit
-from scipy import ndimage
-
-from skimage import filters, measure, morphology
-from skimage.color import rgb2gray
-from skimage.filters.rank import entropy
-from skimage.segmentation import slic, clear_border
-from skimage.util import img_as_ubyte
-from skimage.draw import polygon
-from skimage import measure, morphology, filters
-
-import os
-
-# import pandas as pd
-
-from sklearn.cluster import KMeans
+from numpy.lib.stride_tricks import as_strided
 
 import matplotlib.pyplot as plt
 
-from tqdm import tqdm
+import pandas as pd
 import tabulate  # only used for displaying Aggs structure
+
+from tqdm import tqdm
+import os
+
+import cv2
+from PIL import Image
+
+from scipy.optimize import curve_fit
+from scipy import ndimage
+from scipy.spatial import ConvexHull
+
+# skimage imports.
+from skimage import filters, measure, morphology
+from skimage.segmentation import clear_border
+from skimage.util import img_as_ubyte, invert
+from skimage import measure, morphology, filters
+from skimage.measure import label, regionprops
+try:
+    from skimage.morphology.footprint import rectangle  # Newer versions (0.22+)
+except ImportError:
+    from skimage.morphology import rectangle  # Older versions (pre-0.22)
+
+# Machine learning tools.
+from sklearn.cluster import KMeans
 
 # Import custom modules.
 import tools
 
 
+# To access a field, e.g.: [d['da'] for d in Aggs] OR:
 def get(Aggs, key):
     p = np.array([])
     for Agg in Aggs:
         p = np.append(p, Agg[key])
     return p
 
+# Function to show structure.
+def show(Aggs):
+    header = Aggs[0].keys()
+    rows = [Agg.values() for Agg in Aggs]
+    print(tabulate.tabulate(rows, header))
 
-def seg_kmeans(imgs, pixsizes, opts0='v6.1'):
+
+
+# SEGMENTATION HELPERS ======================================================================#
+def rolling_ball(img_binary, pixsize, morphsc=0.8, minsize=1000):
+    """
+    A simple version of the rolling ball transform for binary masks
+    (in contrast to the double rolling ball transform below).
+
+    Applied to a single image (no looping).
+
+    Also removes small objects, after rolling ball.
+    """
+
+    morph_param = 0.8 / pixsize  # morphological scale parameter used several places below
+
+    ds = round(morphsc * morph_param)
+    se6 = morphology.disk(max(ds, 1))
+    i7 = cv2.morphologyEx(img_binary.astype(np.uint8), cv2.MORPH_CLOSE, se6)
+
+    se7 = morphology.disk(max(ds - 1, 0))
+    img_rb = cv2.morphologyEx(i7, cv2.MORPH_OPEN, se7)
+
+    img_binary = morphology.remove_small_objects(img_rb.astype(bool), minsize)
+
+    return img_binary
+
+
+def rolling_ball_double(img_binary, pixsize, minparticlesize=4.9, coeffs=None):
+    """
+    Perform a rolling ball transformation on a binary image.
+    
+    Parameters:
+        img_binary (np.ndarray): Binary image.
+        pixsize (float): Pixel size in nm/pixel.
+        minparticlesize (float, optional): Minimum particle size. Default is 4.9.
+        coeffs (list, optional): Coefficient matrix defining element sizes at different stages.
+    
+    Returns:
+        np.ndarray: Transformed binary image.
+    """
+    # Default coefficient matrix
+    coeff_matrix = np.array([
+        [0.2, 0.8, 0.4, 1.1, 0.4],
+        [0.2, 0.3, 0.7, 1.1, 1.8],
+        [0.3, 0.8, 0.5, 2.2, 3.5],
+        [0.1, 0.8, 0.4, 1.1, 0.5]
+    ])
+    
+    # Select coefficients based on pixsize
+    if coeffs is None:
+        if pixsize <= 0.181:
+            coeffs = coeff_matrix[0]
+        elif pixsize <= 0.361:
+            coeffs = coeff_matrix[1]
+        else:
+            coeffs = coeff_matrix[2]
+    
+    a, b, c, d, e = coeffs
+    
+    # Rolling ball transformations (morphological operations)
+    se = morphology.disk(round(a * minparticlesize / pixsize))
+    img_binary = morphology.closing(img_binary, se)
+    
+    se = morphology.disk(round(b * minparticlesize / pixsize))
+    img_binary = morphology.opening(img_binary, se)
+    
+    se = morphology.disk(round(c * minparticlesize / pixsize))
+    img_binary = morphology.closing(img_binary, se)
+    
+    se = morphology.disk(round(d * minparticlesize / pixsize))
+    img_binary = morphology.opening(img_binary, se)
+    
+    # Delete small blobs below threshold area size
+    labeled_img = label(np.abs(img_binary - 1))
+    regions = regionprops(labeled_img)
+    
+    nparts = len(regions)
+    mod = 10 if nparts > 50 else 1
+    
+    for region in regions:
+        area = region.area * pixsize ** 2
+        if area <= (mod * e * minparticlesize / pixsize) ** 2:
+            img_binary[labeled_img == region.label] = 1
+    
+    return img_binary
+
+
+def bg_subtract(img):
+    """
+    Subtracts the background from the image using a rolling ball transformation and polynomial fitting.
+    
+    Parameters:
+        img (np.ndarray): 2D numpy array representing the image.
+    
+    Returns:
+        img_out (np.ndarray): Image with background subtracted.
+        bg (np.ndarray): Background image (fit surface).
+    """
+
+    def poly22(xy, a, b, c, d, e, f):
+        x, y = xy
+        return a * x**2 + b * y**2 + c * x * y + d * x + e * y + f
+    
+    # -- Rolling ball transformation to determine the background --------------
+    se_bg = morphology.disk(80)
+    pre_bg = cv2.morphologyEx(img, cv2.MORPH_CLOSE, se_bg)
+    
+    # -- Fit surface ----------------------------------------------------------
+    X, Y = np.meshgrid(np.arange(img.shape[1]), np.arange(img.shape[0]))
+    X = X.flatten()
+    Y = Y.flatten()
+    Z = pre_bg.flatten()
+
+    # Fit polynomial surface of degree 2
+    params, _ = curve_fit(poly22, (X, Y), Z, p0=[1, 1, 1, 1, 1, 1])
+    
+    # Evaluate the fit surface
+    bg = poly22((X, Y), *params).reshape(img.shape)
+    
+    # Convert to uint8 and normalize
+    t0 = np.max(bg) - bg
+    t1 = img + t0
+    t2 = t1 - np.min(t1)
+    img_out = np.round(255 * t2 / np.max(t2)).astype(np.uint8)
+    
+    return img_out
+
+
+
+# SEGMENTATION METHODS ======================================================================#
+def seg_kmeans(imgs:list, pixsizes:list, v:str='default'):
     """
      Compiling these different feature layers results in a three 
      layer image (see FEATURE_SET output) that will be used for segmentation. 
@@ -82,8 +225,8 @@ def seg_kmeans(imgs, pixsizes, opts0='v6.1'):
      nm/pixel. If not given, 1 nm/pixel is assumed, with implications for the
      rolling ball transform. As before, the output is a binary mask. 
     
-     IMG_BINARY = agg.seg_kmeans(IMGS,PIXSIZES,OPTS) adds a options data 
-     structure that controls the minimum size of aggregates (in pixels) 
+     IMG_BINARY = agg.seg_kmeans(IMGS,PIXSIZES,V) adds a version string that
+     loads options that controls the minimum size of aggregates (in pixels) 
      allowed by the program. 
     
      [IMG_BINARY,IMG_KMEANS] = agg.seg_kmeans(...) adds an output for the raw
@@ -97,39 +240,47 @@ def seg_kmeans(imgs, pixsizes, opts0='v6.1'):
      
      AUTHOR: Timothy Sipkens, 2020-08-13
     """
-    if pixsizes is None:
-        raise ValueError("PIXSIZES is a required argument unless Imgs structure is given.")
     
-    opts = tools.load_config(os.path.join(os.path.dirname(__file__), f'config\\km.{opts0}.json'))
+    opts = tools.load_config(os.path.join(os.path.dirname(__file__), f'config\\km.{v}.yaml'))
     
     n = len(imgs)
     img_binary = [None] * n
     img_kmeans = [None] * n
     feature_set = [None] * n
 
-    print(f'Performing k-means segmentation ({opts0}):')
+    print(f'Performing k-means segmentation (v. = {v}).')
     for ii in tqdm(range(n)):
         img = imgs[ii]
         pixsize = pixsizes[ii]
-        morph_param = 0.8 / pixsize  # changed relative to MATLAB
+        morph_param = 0.8 / pixsize  # morphological scale parameter used several places below
 
         img = bg_subtract(img)
 
+        # FEATURE 3: Denoise image.
         img_denoise = cv2.bilateralFilter(img, d=15, sigmaColor=650, sigmaSpace=1)
         
-        se = morphology.disk(round(5 * opts['morphsc']))
+        # FEATURE 1: Entropy.
+        se = morphology.disk(max(round(5 * opts['morphsc']), 1))
+        # se = morphology.disk(round(25 * morph_param * opts['morphsc']))  # updated in Python
         i10 = cv2.morphologyEx(img_denoise, cv2.MORPH_BLACKHAT, se)
 
-        # i11 = entropy(i10, morphology.disk(15))
-        i11 = entropy(i10, morphology.rectangle(15, 15))
+        i11 = filters.rank.entropy(i10, rectangle(15, 15))
         i11 = i11 / np.max(i11) * 255  # scale before converting to int
         i11 = i11.astype(np.uint8)
 
         se12 = morphology.disk(max(round(5 * morph_param), 1))
+        # se12 = morphology.disk(max(round(25 * morph_param * opts['morphsc']), 1))  # updated in Python
         i12 = cv2.morphologyEx(i11, cv2.MORPH_CLOSE, se12)
 
+        # Considered in the Python version.
+        # Scale image and enhance contrast.
+        # i12 = i12 - np.min(i12)  # scale image
+        # i12 = 255 * (i12 / np.max(i12))
+        # i12 = tools.enhance_contrast([i12.astype(np.uint8)], 1.5)[0].astype(np.float32)
+
+        # FEATURE 2: Adjusted Otsu.
         i1 = img_as_ubyte(img_denoise)
-        i1 = cv2.GaussianBlur(i1, (0,0), round(5 * morph_param), round(5 * morph_param))
+        i1 = cv2.GaussianBlur(i1, (0,0), max(round(5 * morph_param), 1), max(round(5 * morph_param), 1))
 
         lvl2 = filters.threshold_otsu(i1)
         i2a = i1 < lvl2
@@ -169,79 +320,247 @@ def seg_kmeans(imgs, pixsizes, opts0='v6.1'):
                 i5[bw1 == jj] = 1
         i5 = cv2.GaussianBlur(img_as_ubyte(i5), (0,0), int(3.75 * opts['morphsc']), int(3.75 * opts['morphsc']))
 
-        feature_set[ii] = np.dstack((i12, i5, img_denoise)).astype(np.float32)
-
-        # Scale feature set.
+        # COMPILE FEATURES.
+        feature_set[ii] = np.stack([i12, i5, img_denoise], axis=2).astype(np.float32)
         fs = feature_set[ii]
+
+        # Reshape for k-means (each pixel as a feature vector)
+        h, w, c = fs.shape
+        fs = fs.reshape(-1, c)  # Convert (H, W, 3) → (H*W, 3)
+
+        # Scale feature set removed in Python version.
         fs = fs - np.mean(np.mean(fs, 0), 0)
         fs = fs / np.std(fs.reshape(-1, 3), 0)
 
-        kmeans = KMeans(n_clusters=2, random_state=0).fit(fs.reshape(-1, 3))
-        img_kmeans[ii] = kmeans.labels_.reshape(img.shape)
+        # Perform K-means clustering
+        kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
+        labels = kmeans.fit_predict(fs)
+
+        # Reshape labels back to image size
+        # and convert to binary mask.
+        bw = labels.reshape(h, w) == 1
+
+        # Identify the segment with the maximum mean intensity.
+        mean_values = [img_denoise[bw].mean(), img_denoise[~bw].mean()]
+        ind_max = np.argmax(mean_values)
+
+        # Segmented image.
+        img_kmeans[ii] = (bw == (ind_max == 0))
 
         # Reverse BG and labeled data. 
         if np.mean(img[img_kmeans[ii] == 1]) > np.mean(img[img_kmeans[ii] == 0]):
             img_kmeans[ii] = 1 - img_kmeans[ii]
 
-        ds = round(opts['morphsc'] * morph_param)
-        se6 = morphology.disk(max(ds, 1))
-        i7 = cv2.morphologyEx(img_kmeans[ii].astype(np.uint8), cv2.MORPH_CLOSE, se6)
+        img_binary[ii] = rolling_ball(img_kmeans[ii], pixsize, opts['morphsc'], opts['minsize'])
 
-        se7 = morphology.disk(max(ds - 1, 0))
-        img_rb = cv2.morphologyEx(i7, cv2.MORPH_OPEN, se7)
+        # ds = round(opts['morphsc'] * morph_param)
+        # se6 = morphology.disk(max(ds, 1))
+        # i7 = cv2.morphologyEx(img_kmeans[ii].astype(np.uint8), cv2.MORPH_CLOSE, se6)
 
-        img_binary[ii] = morphology.remove_small_objects(img_rb.astype(bool), opts['minsize'])
+        # se7 = morphology.disk(max(ds - 1, 0))
+        # img_rb = cv2.morphologyEx(i7, cv2.MORPH_OPEN, se7)
 
-    if n == 1:
-        img_binary = img_binary[0]
-        img_kmeans = img_kmeans[0]
-        feature_set = feature_set[0]
+        # img_binary[ii] = morphology.remove_small_objects(img_rb.astype(bool), opts['minsize'])
+
+    tools.textdone()
 
     return img_binary, img_kmeans, feature_set
 
 
-def bg_subtract(img):
+def seg_otsu(imgs, pixsizes=None, *args):
     """
-    Subtracts the background from the image using a rolling ball transformation and polynomial fitting.
-    
+    Performs Otsu thresholding and a rolling ball transformation.
+
     Parameters:
-        img (np.ndarray): 2D numpy array representing the image.
-    
+        imgs (list or np.ndarray): A list of cropped images or a single image.
+        pixsizes (list or float, optional): Pixel sizes in nm/pixel. Default is 1.
+        *args: Arguments to be passed to the rolling_ball_double operation.
+
     Returns:
-        img_out (np.ndarray): Image with background subtracted.
-        bg (np.ndarray): Background image (fit surface).
+        list or np.ndarray: Binary mask(s).
+    """
+    # Handle inputs
+    if pixsizes is None:
+        raise ValueError("PIXSIZES is a required argument unless images structure is given.")
+    if not isinstance(imgs, list):
+        imgs = [imgs]
+    if not isinstance(pixsizes, list):
+        pixsizes = [pixsizes] * len(imgs)
+
+    n = len(imgs)
+    img_binary = []
+
+    print("Performing Otsu segmentation:")
+    for ii in tqdm(range(n)):
+        img = imgs[ii]
+        pixsize = pixsizes[ii]
+
+        # Step 0a: Remove the background
+        img = bg_subtract(img)
+
+        # Step 0b: Perform denoising
+        img = cv2.bilateralFilter(img, d=15, sigmaColor=650, sigmaSpace=1)
+
+        # Step 1: Apply intensity threshold (Otsu)
+        level = filters.threshold_otsu(img)
+        bw = img > level
+
+        # Step 2: Rolling Ball Transformation
+        binary = rolling_ball_double(bw, pixsize, *args)
+        img_binary.append(invert(binary))
+    tools.textdone()
+
+    # If a single image, return the binary mask directly
+    return img_binary[0] if n == 1 else img_binary
+
+
+def seg_sam2(imgs, pixsizes=None, *args):
+    """
+    Interface with SAM2 solver. Note that subprocesses are started to enable
+    the use of matplotlib in higher-level functions without crashing Jupyter. 
     """
 
-    def poly22(xy, a, b, c, d, e, f):
-        x, y = xy
-        return a * x**2 + b * y**2 + c * x * y + d * x + e * y + f
-    
-    # -- Rolling ball transformation to determine the background --------------
-    se_bg = morphology.disk(80)
-    pre_bg = cv2.morphologyEx(img, cv2.MORPH_CLOSE, se_bg)
-    
-    # -- Fit surface ----------------------------------------------------------
-    X, Y = np.meshgrid(np.arange(img.shape[1]), np.arange(img.shape[0]))
-    X = X.flatten()
-    Y = Y.flatten()
-    Z = pre_bg.flatten()
+    import pickle, io, subprocess
 
-    # Fit polynomial surface of degree 2
-    params, _ = curve_fit(poly22, (X, Y), Z, p0=[1, 1, 1, 1, 1, 1])
+    # Pickle the input into bytes
+    buffer = io.BytesIO()
+    pickle.dump(imgs, buffer)
+    buffer.seek(0)
+    binary_input = buffer.read()
+
+    # Create the subprocess. 
+    # See agg\\sam2_segmenter.py for more details.
+    print('Initiating subprocess for SAM2 ...')
+    process = subprocess.Popen(
+        ['python', f'{os.path.dirname(__file__)}\\sam2_segmenter.py'],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    # Communicate sends binary input and waits for the process to complete.
+    print('Running subprocess (this could take a while) ...')
+    stdout, stderr = process.communicate(input=binary_input)
     
-    # Evaluate the fit surface
-    bg = poly22((X, Y), *params).reshape(img.shape)
-    
-    # Convert to uint8 and normalize
-    t0 = np.max(bg) - bg
-    t1 = img + t0
-    t2 = t1 - np.min(t1)
-    img_out = np.round(255 * t2 / np.max(t2)).astype(np.uint8)
-    
-    return img_out
+    # Load binary masks that were pickled by subprocess.
+    print('Unpickling binary masks ...')
+    imgs_binary = pickle.loads(stdout)
+
+    tools.textdone()  # print green DONE! text
+
+    return imgs_binary
 
 
-def analyze_binary(imgs_binary, pixsize=None, imgs=None, fname=None, f_edges=1, f_plot=1, maxagg=50):
+def seg_carboseg(imgs, pixsizes=None, opts=None):
+    """
+    Wrapper for creating instance of class of the carboseg Classifier and running.
+
+    Adds morphological rolling ball operation.
+    """
+
+    from agg.carboseg import Classifier  # import Classifier class
+
+    # Resize images to match classifier.
+    # This will results in some stretch and possibly changes in image texture.
+    imgs = imgs.copy()
+    
+    sz = np.shape(imgs[0])
+    for ii in range(len(imgs)):
+        imgs[ii] = Image.fromarray(imgs[ii].T)
+        imgs[ii] = imgs[ii].resize((2240, 1952))
+        imgs[ii] = np.array(imgs[ii])
+
+    classifier = Classifier()  # create an instance of the classifier
+    imgs_binary = classifier.run(imgs)  # run the classifier to get predictions
+    
+    # Resize back to original size for output.
+    for ii in range(len(imgs_binary)):
+        imgs_binary[ii] = Image.fromarray(imgs_binary[ii])
+        imgs_binary[ii] = imgs_binary[ii].resize(sz)
+        imgs_binary[ii] = np.array(imgs_binary[ii])
+
+        # Add rolling ball operation.
+        if not pixsizes[ii] == None:
+            imgs_binary[ii] = rolling_ball(imgs_binary[ii], pixsizes[ii], 0.8, 20).T
+            
+            # morph_param = 0.8 / pixsizes[ii]
+            # ds = max(round(4 * morph_param), 1)
+            
+            # se6 = disk(ds)
+            # i7 = closing(imgs_binary[ii], se6)
+            
+            # se7 = disk(max(ds - 1, 0))
+            # i7 = opening(i7, se7)
+            
+            # imgs_binary[ii] = remove_small_objects(i7, min_size=20).T
+
+    tools.textdone()  # print green DONE! text
+
+    return imgs_binary
+
+
+def seg_circles(imgs, pixsizes=None, maxRadius=200):
+
+    n = len(imgs)
+    imgs_binary = [None] * n
+
+    print("Performing circles segmentation:")
+    for ii in tqdm(range(n)):
+        img = imgs[ii]
+
+        imgs_binary[ii] = np.zeros(img.shape, dtype=bool)  # initialize binary mask
+
+        img = cv2.medianBlur(img, 7)  # blur image to avoid noisy background
+
+        _, otsu = cv2.threshold(img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        img = cv2.bitwise_not(img)  # invert image
+        
+        # bg = np.median(img)  # used to filter out bright circles below
+        # bg = cv2.mean(img, mask=~otsu)[0]
+
+        # Detect circles using HoughCircles
+        kwargs = {
+            'dp': 1.9,             # inverse accumulator resolution
+            'minDist': 60,         # minimum distance between circle centers
+            'param1': 70,          # upper threshold for Canny edge detector
+            'param2': 55,          # threshold for center detection
+            'minRadius': 20,       # minimum radius to be detected
+            'maxRadius': 200       # maximum radius to be detected
+        }
+        circles = cv2.HoughCircles(img, cv2.HOUGH_GRADIENT, **kwargs)
+
+        if circles is not None:
+            circles = np.uint16(np.around(circles))
+
+            for (x, y, r) in circles[0, :]:
+                # Create mask for the circle
+                mask = np.zeros(img.shape, dtype=np.uint8)
+                cv2.circle(mask, (x, y), r, 1, thickness=-1)
+                mask = mask.astype(bool)
+
+                # Compute average grayscale intensity
+                od = np.percentile(img[mask], 30)
+
+                # Get immediate background around circle.
+                # Works better than global background for lacey grids.
+                mask_bg = np.zeros(img.shape, dtype=np.uint8)
+                cv2.circle(mask_bg, (x, y), r+10, 1, thickness=-1)
+                mask_bg = mask_bg.astype(bool)
+                mask_bg = np.logical_and(mask_bg, ~mask)
+                bg = np.mean(img[mask_bg])
+
+                # Only keep circle if it's darker than threshold
+                if od > 1.05 * bg:  # only get dark (bright after inversion) circles (use 0.98 for Otsu background)
+                    imgs_binary[ii] = np.logical_or(imgs_binary[ii], mask)  # add to mask
+
+    tools.textdone()  # print green DONE! text
+
+    return imgs_binary
+
+
+# BINARY ANALYSIS METHODS =================================================================#
+def analyze_binary(imgs_binary, pixsize, imgs, fname=None, remove_edge_aggs=False, toplot=False, maxagg=50):
     # Parse inputs
     if isinstance(imgs_binary, dict):  # consider case that structure is given as input
         Imgs = imgs
@@ -267,17 +586,16 @@ def analyze_binary(imgs_binary, pixsize=None, imgs=None, fname=None, f_edges=1, 
         fname = [None] * len(imgs_binary)
 
     # Initialize figure for plot
-    if f_plot == 1:
+    if toplot == 1:
         f0 = plt.figure()
 
+    # Initialize variables. 
     Aggs = []  # Initialize Aggs structure
-    id = 0
+    id = 0  # start aggregate index at 0
 
-    print("Analyzing binaries")
-    print("Progress:")
+    print("Analyzing binary masks:")
     for ii in tqdm(range(len(imgs_binary))):  # loop through provided images
         img_binary = imgs_binary[ii]
-        img = imgs[ii]
 
         # Skip images with more than 25% boundary aggregates
         bwborder = np.logical_and(img_binary, clear_border(img_binary))
@@ -292,19 +610,9 @@ def analyze_binary(imgs_binary, pixsize=None, imgs=None, fname=None, f_edges=1, 
             np.count_nonzero(img_binary[-1, :]) / img_binary.shape[1]
         ]
         if any(x > 0.2 for x in nn):
-            ia = img_binary.copy()
-            if nn[0] <= 0.2: ia[:, 0] = 0
-            if nn[1] <= 0.2: ia[:, -1] = 0
-            if nn[2] <= 0.2: ia[0, :] = 0
-            if nn[3] <= 0.2: ia[-1, :] = 0
+            continue  # skip
 
-            img_edges = np.logical_xor(ia, morphology.remove_small_objects(ia))
-            img_edm = ndimage.distance_transform_edt(~img_edges)
-            m1, m2 = np.unravel_index(np.argmax(img_edm), img_edm.shape)
-            fun = lambda x: np.sqrt((np.indices(img_binary.shape) - x[0])**2 + (np.indices(img_binary.shape) - x[1])**2) > x[2]
-            img_binary = np.logical_or(fun([m1, m2, img_edm[m1, m2] - 100]), img_binary)
-
-        if f_edges:
+        if remove_edge_aggs:
             img_binary = clear_border(img_binary)
 
         img_binary = morphology.remove_small_objects(img_binary, min_size=10)
@@ -317,28 +625,25 @@ def analyze_binary(imgs_binary, pixsize=None, imgs=None, fname=None, f_edges=1, 
 
         Aggs0 = []
         for jj in range(1, naggs + 1):  # loop through number of found aggregates
-            id += 1
             agg_jj = {
                 'id': id,
                 'img_id': ii,
                 'fname': fname[ii],
                 'pixsize': pixsize[ii]
             }
-            if jj == 1:
-                agg_jj['image'] = img
-            else:
-                agg_jj['image'] = None
+            id += 1
 
             mask = (labeled_img == jj).astype(np.uint8)
-            agg_jj['binary'] = mask
+            # agg_jj['binary'] = mask # no longer save this, to keep Agg size manageable
 
-            _,_,rect = autocrop(img, mask)
-            agg_jj['rect'] = rect
+            agg_jj['first_pixel'] = np.argwhere(mask)[0]
 
             row, col = np.where(mask)
+            agg_jj['center_mass'] = [np.mean(row), np.mean(col)]
+
             agg_jj['length'] = max(np.ptp(row), np.ptp(col)) * pixsize[ii]
             agg_jj['width'] = min(np.ptp(row), np.ptp(col)) * pixsize[ii]
-            agg_jj['aspect_ratio0'] = agg_jj['length'] / agg_jj['width']
+            agg_jj['aspect_ratio'] = agg_jj['length'] / agg_jj['width']
 
             # d = np.sqrt((row[:, None] - row[None, :]) ** 2 + (col[:, None] - col[None, :]) ** 2)
             # dmax = np.max(d)
@@ -352,17 +657,41 @@ def analyze_binary(imgs_binary, pixsize=None, imgs=None, fname=None, f_edges=1, 
             # agg_jj['lmin'] = dd * pixsize[ii]
             # agg_jj['aspect_ratio'] = agg_jj['lmax'] / agg_jj['lmin']
 
+            rect, mask = autocrop(mask)
+            agg_jj['rect'] = rect
+
             agg_jj['num_pixels'] = np.count_nonzero(mask)
             agg_jj['da'] = 2 * np.sqrt(agg_jj['num_pixels'] / np.pi) * pixsize[ii]
             agg_jj['area'] = agg_jj['num_pixels'] * (pixsize[ii] ** 2)
-            agg_jj['Rg'] = gyration(mask, pixsize[ii])
 
+            # Compute radius of gyration (Rg)
+            agg_jj['Rg'], _, _ = gyration(mask, pixsize[ii])
+
+            # Get the contour
+            contour = measure.find_contours(mask, level=0.5)[0]
+
+            # Compute smallest enclosing circle
+            hull = ConvexHull(contour)
+            hull_points = contour[hull.vertices]  # Convex hull points
+
+            # Find the enclosing circle center and radius
+            x_max, y_max = np.max(hull_points, axis=0)
+            x_min, y_min = np.min(hull_points, axis=0)
+            encl_c = ((x_max + x_min) / 2, (y_max + y_min) / 2)
+            agg_jj['encl_c'] = (encl_c[1] + agg_jj['rect'][0], encl_c[0] + agg_jj['rect'][1])
+            agg_jj['encl_r'] = np.max(np.linalg.norm(hull_points - encl_c, axis=1))  # in pixels (to match center)
+            agg_jj['encl_d'] = 2 * agg_jj['encl_r'] * pixsize[ii]  # in nm
+            agg_jj['sphericity'] = agg_jj['da'] / agg_jj['encl_d']
+
+            # Compute perimeters. Currently, perimeter3 is used for output. 
             perimeter1 = np.sum(ndimage.binary_dilation(mask) - mask)
             perimeter3 = get_perimeter2(mask)
             agg_jj['perimeter'] = pixsize[ii] * max(perimeter1, perimeter3)
 
             agg_jj['circularity'] = 4 * np.pi * agg_jj['area'] / (agg_jj['perimeter'] ** 2)
             # agg_jj['compact_b'] = agg_jj['area'] / (np.pi * (agg_jj['lmax'] / 2) ** 2)
+
+            agg_jj['Df'] = box_counting(mask)
 
             # n = np.count_nonzero(mask)
             # p = np.sum(np.abs(mask[:, 1:] - mask[:, :-1])) + np.sum(np.abs(mask[1:, :] - mask[:-1, :]))
@@ -383,24 +712,18 @@ def analyze_binary(imgs_binary, pixsize=None, imgs=None, fname=None, f_edges=1, 
             # gray_extent = np.ptp(img)
             # agg_jj['depth'] = -(np.mean(agg_grayscale) - bg_level) / 255
 
-            agg_jj['center_mass'] = [np.mean(row), np.mean(col)]
-
             Aggs0.append(agg_jj)
 
         Aggs.extend(Aggs0)
-        if f_plot == 1:
-            tools.imshow_agg(Aggs0, list([jj - 1]))
+        if toplot == 1:
+            tools.imshow_agg(pd.DataFrame(Aggs0), imgs, imgs_binary)
             plt.show()
 
+    Aggs = pd.DataFrame(Aggs)  # convert to DataFrame
+
+    tools.textdone()
+
     return Aggs
-
-# To access a field, e.g.: [d['da'] for d in Aggs]
-
-
-def show(Aggs):
-    header = Aggs[0].keys()
-    rows = [Agg.values() for Agg in Aggs]
-    print(tabulate.tabulate(rows, header))
 
 
 
@@ -408,27 +731,25 @@ def gyration(img_binary, pixsize):
     total_area = np.count_nonzero(img_binary)  # total area [px^2]
 
     xpos, ypos = np.where(img_binary)  # position of each pixel
-    n_pix = xpos.size
 
     # Compute centroid.
-    centroid_x = np.mean(xpos)
-    centroid_y = np.mean(ypos)
+    cx = np.mean(xpos)
+    cy = np.mean(ypos)
 
-    Ar2 = (xpos - centroid_x) ** 2 + (ypos - centroid_y) ** 2  # distance to centroid
+    Ar2 = (xpos - cx) ** 2 + (ypos - cy) ** 2  # distance to centroid
     Rg = np.sqrt(np.sum(Ar2) / total_area) * pixsize
 
-    return Rg
-
+    return Rg, xpos, ypos
 
 def get_perimeter2(img_binary):
     # Find the contours of the binary image
-    contours = measure.find_contours(img_binary, 0.5)
+    contour = measure.find_contours(img_binary, 0.5)
     
-    if len(contours) == 0:
+    if len(contour) == 0:
         return 0  # No perimeter if no contours found
 
     # Assume the first contour is the perimeter we want
-    contour = contours[0]
+    contour = contour[0]
     x_mb, y_mb = contour[:, 1], contour[:, 0]
 
     # Group edges
@@ -448,20 +769,173 @@ def get_perimeter2(img_binary):
     
     return p_circ
 
+def box_counting(img_binary):
+    """
+    Performs box counting on a binary mask.
 
-def autocrop(img_orig, img_binary):
+    Args:
+        binary_mask: A 2D numpy array representing a binary mask (0s and 1s).
+        box_size: The size of the boxes (in pixels).
+
+    Returns:
+        The fractal dimension from the box counting method.
+    """
+    box_sizes = [2, 4, 6, 8]
+
+    height, width = img_binary.shape
+
+    # Not big enough for fractal dimension. 
+    # Will still be inaccurate near this limit.
+    if np.min([height, width]) < 10:
+        return np.nan
+
+    counts = np.zeros(len(box_sizes), dtype=int)  # Preallocate array
+    for idx, box_size in enumerate(box_sizes):
+        # Define strided view of the image for faster block checking
+        stride_view = as_strided(
+            img_binary,
+            shape=(height // box_size, width // box_size, box_size, box_size),
+            strides=(box_size * img_binary.strides[0], box_size * img_binary.strides[1], *img_binary.strides)
+        )
+        # Count the number of non-empty boxes
+        counts[idx] = np.sum(np.any(stride_view, axis=(2, 3)))
+    
+    # Fit a line to log-log data to estimate the slope (fractal dimension)
+    coeffs = np.polyfit(np.log(np.array(box_sizes)), np.log(counts), 1)
+    return -coeffs[0]  # Negative slope given Df
+
+
+# CROPPING AND IMAGE MAPPING ==============================================================#
+def autocrop(img_binary, img_orig=None):
+    """
+    Produces rect and cropped version of images.
+    """
     x, y = np.where(img_binary)
 
     space = 3
-    size_img = img_orig.shape
+    size_img = img_binary.shape
 
     x_top = min(max(x) + space, size_img[0])
     x_bottom = max(min(x) - space, 0)
     y_top = min(max(y) + space, size_img[1])
     y_bottom = max(min(y) - space, 0)
 
-    img_binary_cropped = img_binary[x_bottom:x_top, y_bottom:y_top]
-    img_cropped = img_orig[x_bottom:x_top, y_bottom:y_top]
     rect = [y_bottom, x_bottom, y_top - y_bottom, x_top - x_bottom]
+    
+    img_binary_cropped= crop(img_binary, rect)
 
-    return img_cropped, img_binary_cropped, rect
+    # Also crop original image.
+    if not img_orig == None:
+        img_cropped = crop(img_orig, rect)
+        return rect, img_binary_cropped, img_cropped 
+    else:
+        return rect, img_binary_cropped
+    
+
+def crop(img, rect, border=0):
+    """
+    Use rect to crop image.
+    """
+    min1 = np.maximum(rect[1] - border, 0)
+    max1 = np.minimum(rect[1] + rect[3] + border, np.shape(img)[0])
+    
+    min2 = np.maximum(rect[0] - border, 0)
+    max2 = np.minimum(rect[0] + rect[2] + border, np.shape(img)[1])
+
+    return img[min1:max1, min2:max2]
+
+
+def crop_agg(imgs, Aggs, idx=0, **kwargs):
+    """
+    Use rect in Agg to crop image.
+    """
+    return crop(imgs[Aggs['img_id'][idx]], Aggs['rect'][idx], **kwargs)
+
+
+def get_binary(imgs_binary, Aggs, idx=0):
+    """
+    Extracts the binary mask for a single aggregate in the Aggs structure.
+
+    Parameters:
+        mask (ndarray): A binary (logical) mask where objects are labeled as 1.
+        pixel (list): A single [row, col] coordinate inside the object.
+
+    Returns:
+        ndarray: A binary mask of the same shape with only the selected object.
+    """
+    mask = imgs_binary[Aggs['img_id'][idx]]  # index into imgs_binary
+    pixel = Aggs['first_pixel'][idx]  # get first_pixel, which will be used to identify the aggregate
+
+    labeled_mask = label(mask)  # label connected components
+
+    label_at_pixel = labeled_mask[pixel[0], pixel[1]]  # access label using list index
+
+    if label_at_pixel == 0:
+        return np.zeros_like(mask)  # pixel is not inside any object
+
+    return (labeled_mask == label_at_pixel).astype(bool)  # return mask of the selected object
+
+
+def imshow(Aggs, imgs, imgs_binary, idx=0, border=25):
+    """
+    Show a masked version of a single aggregate. 
+    """
+    i0 = crop_agg(imgs, Aggs, idx=idx, border=25)
+    i1 = crop(get_binary(imgs_binary, Aggs, idx=idx), Aggs['rect'][idx], border=border)
+
+    tools.imshow_binary(i0, i1)
+
+    #== ADD RADIUS OF GYRATION ==#
+    Rg = Aggs['Rg'][idx] / Aggs['pixsize'][idx]
+    ra = Aggs['da'][idx] / 2 / Aggs['pixsize'][idx]
+    rect = Aggs['rect'][idx]
+    center = (Aggs['center_mass'][idx][1] - rect[0] + border, Aggs['center_mass'][idx][0] - rect[1] + border)
+
+    # Generate points.
+    theta = np.linspace(0, 2 * np.pi, 100)
+
+    # Plot circles.
+    x = center[0] + Rg * np.cos(theta)
+    y = center[1] + Rg * np.sin(theta)
+    plt.plot(x, y, '--', linewidth=3, color=[0.92, 0.16, 0.49])
+
+    x = center[0] + ra * np.cos(theta)
+    y = center[1] + ra * np.sin(theta)
+    plt.plot(x, y, '-', linewidth=3, color=[0.92, 0.16, 0.49])
+
+
+def match(Aggs1, Aggs2, tol=20):
+    """
+    Match aggregates in Aggs1 to those in Aggs2 based on center of mass.
+    tol is the tolerance in pixels for matching.
+    """
+
+    idx = []
+
+    for ii in range(len(Aggs1)):
+        agg1 = Aggs1.loc[ii]
+        img_id = agg1['img_id']
+        agg2 = Aggs2[Aggs2['img_id'] == img_id]
+
+        if len(agg2) == 0:
+            continue
+        
+        d = np.linalg.norm(np.stack(agg2['center_mass'].to_numpy()) - np.array(agg1['center_mass']), axis=1)
+        j = np.argmin(d)
+
+        if d[j] < tol:  # based on center-of-mass distance
+            idx.append((ii, agg2.index[j]))
+
+    return idx
+
+
+def overlap(idx, Aggs1, Aggs2, binary1, binary2):
+
+    overlap = np.zeros(len(idx))
+    for ii in range(len(idx)):
+        i1 = get_binary(binary1, Aggs1, idx[ii][0])
+        i2 = get_binary(binary2, Aggs2, idx[ii][1])
+        
+        overlap[ii] = np.sum(np.logical_and(i1, i2)) / np.sum(np.logical_or(i1, i2))
+
+    return overlap

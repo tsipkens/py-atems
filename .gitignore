@@ -1,10 +1,21 @@
 # Custom exclusions
 data_local/
-dm3_lib/
 out/
 images/slider
 working/
-main_*
+main_x*
+main_test*
+tmp.py
+docs/CODE_figs.pptx
+
+# Ignore local copy of SAM2
+sam2/
+checkpoints/
+
+# VS Code
+.vscode/
+.history/
+*.code-workspace
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -166,3 +177,6 @@ cython_debug/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+agg/config/FPN-resnet50-imagenet.onnx
+resnet50_simplified.onnx
+agg/config/FPN-resnet50-imagenet-cuda.onnx

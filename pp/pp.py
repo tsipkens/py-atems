@@ -1,11 +1,14 @@
 import os
 import numpy as np
+
 import matplotlib.pyplot as plt
+
+import pandas as pd
 
 from scipy.ndimage import distance_transform_edt, convolve
 from scipy.interpolate import interp1d
 from scipy.optimize import least_squares
-from skimage.morphology import skeletonize, disk
+from skimage.morphology import skeletonize, disk, remove_small_holes
 from skimage.measure import label, regionprops
 from skimage.filters import median, unsharp_mask
 from skimage.feature import peak_local_max, canny
@@ -16,7 +19,7 @@ import cv2
 from tqdm import tqdm
 
 # Import custom modules.
-import tools
+import tools, agg
 
 
 def smooth(d, width):
@@ -33,7 +36,7 @@ def smooth(d, width):
     return np.concatenate((initial, ds, end))
 
 
-def pcm(Aggs, f_plot=False, f_backup=False, opts=None):
+def pcm(Aggs, imgs_binary, f_plot=False, f_backup=False, opts=None):
     """
     Performs the pair correlation method (PCM) of aggregate characterization.
     
@@ -60,7 +63,7 @@ def pcm(Aggs, f_plot=False, f_backup=False, opts=None):
         if not opts.startswith('+pp'):
             opts = f'config/pcm.{opts}.json'
 
-    opts = tools.load_config('config/pcm.v1.s.json')
+    opts = tools.load_config(opts)
 
     # Check if the data folder exists, create if not
     if not os.path.exists('data'):
@@ -70,18 +73,21 @@ def pcm(Aggs, f_plot=False, f_backup=False, opts=None):
         plt.figure()  # create figure for visualizing current aggregate
 
     # Main image processing loop
-    n_aggs = len(Aggs)
+    # Aggs = Aggs.to_dict(orient='records')
+
     print('Performing PCM loop:')
-
     for aa in tqdm(range(len(Aggs))):
-        agg_aa = Aggs[aa]
+        agg_aa = Aggs.loc[aa].copy()
 
-        pixsize = agg_aa.get('pixsize')
-        img_binary = tools.imcrop(agg_aa.get('binary'), agg_aa.get('rect'))  # crop the binarized image
+        pixsize = agg_aa['pixsize']
+        img_binary = agg.get_binary(imgs_binary, Aggs, idx=aa)  # crop the binarized image
+
+        # Avoids error 
+        img_binary = remove_small_holes(img_binary, area_threshold=100)
 
         if np.isnan(pixsize):
-            agg_aa['dp_pcm'] = np.nan
-            agg_aa['dp'] = agg_aa['dp_pcm']
+            agg_aa.loc['dp_pcm'] = np.nan
+            agg_aa.loc['dp'] = agg_aa['dp_pcm']
             continue
 
         # Step 3-3: Development of the pair correlation function (PCF)
@@ -89,7 +95,7 @@ def pcm(Aggs, f_plot=False, f_backup=False, opts=None):
         skel_y, skel_x = np.where(skel)  # find skeleton pixels
 
         row, col = np.where(img_binary)
-        thin = max(round(agg_aa.get('num_pixels') / 6e3), 1)
+        thin = max(round(agg_aa['num_pixels'] / 6e3), 1)
         X = col[::thin]
         Y = row[::thin]
 
@@ -170,18 +176,25 @@ def pcm(Aggs, f_plot=False, f_backup=False, opts=None):
             pcf_0 = (0.913 / 0.84) * (0.7 + 0.003 * Rg_slope ** -0.24 + 0.2 * agg_aa['aspect_ratio'] ** -1.13)
 
         # Get PCM diameter
-        agg_aa['dp_pcm'] = 2 * np.interp(pcf_0, pcf_smooth[::-1], r1[::-1])
+        try:
+            agg_aa.loc['dp_pcm'] = 2 * np.interp(pcf_0, pcf_smooth[::-1], r1[::-1])
+        except:
+            agg_aa.loc['dp_pcm'] = np.nan
 
         # Catch case where particle is small and nearly spherical
         if np.isnan(agg_aa['dp_pcm']) and agg_aa['num_pixels'] < 500 and agg_aa['aspect_ratio'] < 1.4:
-            agg_aa['dp_pcm'] = agg_aa['da']
+            agg_aa.loc['dp_pcm'] = agg_aa['da']
 
-        agg_aa['dp'] = agg_aa['dp_pcm']
+        # Assign back to master DataFrame.
+        Aggs.loc[aa, 'dp_pcm'] = agg_aa['dp_pcm']
+        Aggs.loc[aa, 'dp'] = agg_aa['dp_pcm']
+
+    tools.textdone()
 
     return Aggs
 
 
-def edm_sbs(imgs_Aggs, pixsizes=None):
+def edm_sbs(Aggs, imgs_binary, pixsizes=None):
     """
     EDM_SBS Performs Euclidean distance mapping-scale based analysis. 
         Based on the work of Bescond et al., Aerosol Sci. Technol. (2014).
@@ -203,27 +216,13 @@ def edm_sbs(imgs_Aggs, pixsizes=None):
     """
 
     #-- Parse inputs ---------------------------------------------------------%
-    # OPTION 1: Consider case that Aggs is given as input.
-    if isinstance(imgs_Aggs, list) and all(isinstance(item, dict) for item in imgs_Aggs):
-        Aggs0 = imgs_Aggs
-        pixsizes = np.array([agg['pixsize'] for agg in Aggs0])
-        imgs_binary0 = [agg['binary'] for agg in Aggs0]
-
-    # OPTION 2: A single binary image is given.
-    elif not isinstance(imgs_Aggs, list):
-        imgs_binary0 = [imgs_Aggs]
-        Aggs0 = []
-
-    # OPTION 3: A list of images is given.
-    else:
-        imgs_binary0 = imgs_Aggs
-        Aggs0 = []
+    pixsizes = Aggs['pixsize']
 
     # Extract or assign the pixel size for each aggregate
     if pixsizes is None:
         pixsizes = 1
     if np.isscalar(pixsizes):
-        pixsizes = pixsizes * np.ones(len(imgs_binary0))
+        pixsizes = pixsizes * np.ones(len(imgs_binary))
 
     #-- Discretization for accumulated S curve -------------------------------%
     d_max = 100
@@ -232,10 +231,11 @@ def edm_sbs(imgs_Aggs, pixsizes=None):
     S = np.zeros_like(dp_bin)  # initialize S curve
 
     #-- Main loop over binary images -----------------------------------------%
-    for aa in tqdm(range(len(imgs_binary0))):
+    print('Performing EDM-SBS loop:')
+    for aa in tqdm(range(len(Aggs))):
 
-        img_binary = Aggs0[aa].get('binary')
-        pixsize = Aggs0[aa].get('pixsize')
+        img_binary = agg.get_binary(imgs_binary, Aggs, idx=aa)  # crop the binarized image
+        pixsize = pixsizes[aa]
 
         #== STEP 1: Morphological opening of the binary image ================%
         se_max = 150
@@ -272,15 +272,15 @@ def edm_sbs(imgs_Aggs, pixsizes=None):
         Sa_fit = sigmoid(x1)  # for diagnostic purposes only
 
         # Update Aggs dictionary
-        Aggs0[aa]['dp_edm'] = x1[0],  # geometric mean diameter for output
-        Aggs0[aa]['sg_edm'] = x1[1],  # geometric standard deviation for output
-        Aggs0[aa]['dp'] = x1[0]  # assign primary particle diameter based on dp_edm
-        Aggs0[aa]['dp_edm_tot'] = None
-        Aggs0[aa]['sg_edm_tot'] = None
+        Aggs.loc[aa, 'dp_edm'] = x1[0],  # geometric mean diameter for output
+        Aggs.loc[aa, 'sg_edm'] = x1[1],  # geometric standard deviation for output
+        Aggs.loc[aa, 'dp'] = x1[0]  # assign primary particle diameter based on dp_edm
+        Aggs.loc[aa, 'dp_edm_tot'] = None
+        Aggs.loc[aa, 'sg_edm_tot'] = None
 
         S += Sa  # add to accumulated S curve
 
-    S = S / len(imgs_binary0)  # normalize S curve
+    S = S / len(imgs_binary)  # normalize S curve
 
     #== Fit a sigmoid function to all of the data ============================%
     sigmoid = lambda x: a / (1 + np.exp(((np.log(x[0]) - np.log(dp_bin)) / x[1] - bet) / ome))
@@ -289,10 +289,12 @@ def edm_sbs(imgs_Aggs, pixsizes=None):
     S_fit = sigmoid(x1)
 
     # Store average dp and sg over the entire set of samples in the first entry of Aggs
-    Aggs0[0]['dp_edm_tot'] = x1[0]
-    Aggs0[0]['sg_edm_tot'] = x1[1]
+    Aggs.loc[0, 'dp_edm_tot'] = x1[0]
+    Aggs.loc[0, 'sg_edm_tot'] = x1[1]
+    
+    tools.textdone()
 
-    return Aggs0, dp_bin, S, S_fit
+    return Aggs, dp_bin, S, S_fit
 
 
 def hough_simple(Aggs, f_plot=1, opts=None):

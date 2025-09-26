@@ -1,0 +1,5 @@
+lvl3: 'np.linspace(1, 1.35, 100)' # range of thresholds to build curve
+lvl5: 0.1 # where to threshold on hist curve
+lvlfun: 'lin' # type of adjusted threshold
+morphsc: 2 # modification to morph. parameter for rolling ball
+minsize: 20 # minimum particle size to consider (in pixels)

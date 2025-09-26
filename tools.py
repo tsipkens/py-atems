@@ -5,45 +5,42 @@ import scipy.stats as stats
 import scipy.optimize as op
 
 import matplotlib.pyplot as plt
-from matplotlib.patches import FancyBboxPatch, Circle
+from matplotlib.patches import Circle, PathPatch
+from matplotlib.path import Path
+from matplotlib.colors import to_rgba
 
 import cv2
-import pytesseract
-from pytesseract import Output
 
-from tkinter import Tk
-from tkinter.filedialog import askopenfilenames, askdirectory
+from tkinter.filedialog import askopenfilenames
 
-from skimage.segmentation import mark_boundaries
-from skimage.filters import sobel
-from skimage.morphology import dilation, disk
-from skimage.measure import label, regionprops
-from skimage.color import label2rgb
+from skimage.measure import label, find_contours
 
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+from PIL import Image
 
 from tqdm import tqdm
 
 import json
-import os
+import yaml
+import os, csv
 import pickle
+import pandas as pd
 
 import dm3_lib as dm3
 
 
 def load_config(fn):
-    """Loads JSON configuration files.
-
-    First loads default configuration before modifying those inputs.
     """
-    with open(fn) as f:
-        opts = json.load(f)
+    Loads configuration files (either JSON or YAML).
+    """
+    if fn[-4:].lower() == 'json':
+        with open(fn) as f:
+            opts = json.load(f)
+
+    else:
+        with open(fn) as f:
+            opts = yaml.safe_load(f)
         
     return opts
-
-
-def imcrop(img, rect):
-    return img[rect[1]:rect[1]+rect[3], rect[0]:rect[0]+rect[2]]
 
 
 def imshow(img, cmap=None, pixsize=None):
@@ -63,18 +60,18 @@ def imshow(img, cmap=None, pixsize=None):
     if cmap is None:
         cmap = 'gray'
 
+    if pixsize is not None:
+        img = overlay_scale(img, pixsize)
+
     h = plt.imshow(img, cmap=cmap)  # Show image with colormap
     plt.axis('image')  # Adjust the axis to proper dimensions
     plt.xticks([])  # Remove x-ticks
     plt.yticks([])  # Remove y-ticks
 
-    if pixsize is not None:
-        overlay_scale(pixsize)
-
     return h
 
 
-def imshow2(imgs, cmap=None, n=None, pixsizes=None):
+def imshow2(imgs:list, n=None, pixsizes=None, **kwargs):
     """
     A wrapper for displaying multiple images using matplotlib.
 
@@ -96,23 +93,23 @@ def imshow2(imgs, cmap=None, n=None, pixsizes=None):
     """
 
     # Parse inputs
-    if cmap is None:
-        cmap = 'gray'  # default colormap
-    if pixsizes is None:
-        pixsizes = []
     if not isinstance(imgs, list):
         imgs = [imgs]
 
     # Incorporate indices of images to plot, if specified
     if n is None:
         n = list(range(len(imgs)))
-    imgs = [imgs[i] for i in n]
+    imgs = [imgs[ii] for ii in n]
 
     # Limit plotting to first 24 images
     if len(imgs) > 24:
         imgs = imgs[:24]
 
-    n_imgs = len(imgs)
+    n_imgs = len(imgs)  # number of images after above processing
+
+    # Create None list of pixsizes, if not given, to avoid error below.
+    if pixsizes is None:
+        pixsizes = list(None for _ in range(n_imgs))
 
     # If more than one image, prepare to tile and maximize figure
     if n_imgs > 1:
@@ -125,118 +122,143 @@ def imshow2(imgs, cmap=None, n=None, pixsizes=None):
     for ii in range(n_imgs):  # loop over images
         if n_imgs > 1:
             plt.subplot(N1, N2, ii + 1)
-            plt.title(str(ii + 1))
-        imshow(imgs[ii], cmap=cmap)
+            plt.title(str(n[ii]))
+        imshow(imgs[ii], pixsize=pixsizes[ii], **kwargs)
 
 
-def overlay_scale(pixsize, frac=0.2):
-    # Get the current image
-    ax = plt.gca()
-    I = ax.get_images()[0].get_array()
+def overlay_scale(img, pixsize, frac=0.3):
+
+    img = img.copy()  # don't overwrite
 
     # Calculate bar length in pixels and nm
-    bar_length0 = int(np.floor(I.shape[1] * frac))  # in pixels
-    bar_length1 = round(pixsize * bar_length0)  # in nm
+    bar_length0 = int(np.floor(img.shape[1] * frac))  # in pixels, based on fraction (`frac`) of image size 
+    bar_length1 = round(pixsize * bar_length0)  # in nm, rounded for string operation below
 
     # Round up bar length if necessary
-    s1 = str(bar_length1)
+    s1 = str(bar_length1)  # convert to string for manipulation
     b1 = int(s1[0])  # first digit
+    if b1 > 5:  # do some rounding (closest 1, 2, or 5 up)
+        s1 = '0' + s1
+        b1 = 1
+    elif b1 > 2:
+        b1 = 5
+
     l1 = len(s1)  # length of number
-    if b1 > 5:
-        if b1 > 7:
-            bar_length1 = 10 ** l1
-        else:
-            bar_length1 = 5 * 10 ** (l1 - 1)
-    
-    bar_length1 = round(bar_length1, 1)  # round in nm
-    bar_length = bar_length1 / pixsize  # in pixels
+    bar_length = b1 * 10 ** (l1 - 1)  # use only first digit (rounded above) and order-of-magnitude
+    bar_length_px = int(bar_length / pixsize)  # in pixels
 
     # Properties for scale bar
-    margin = np.floor(np.array(I.shape[::-1]) * 0.05).astype(int)
-    bar_height = margin[1] // 5
-    font_props = {
-        'ha': 'right',
-        'va': 'bottom',
-        'fontsize': 11,
-        'weight': 'bold'
-    }
+    margin = np.floor(np.array(img.shape[0:2]) * 0.05).astype(int)  # margin away from edge of the image
+    bar_height = margin[1] // 5  # height of the bar
+    start_y, end_x = img.shape[1] - margin[1], img.shape[0] - margin[0]  # start positions for bar
 
-    # Draw the scale bar
-    ax.add_patch(FancyBboxPatch(
-        (I.shape[1] - margin[1] - bar_length, I.shape[0] - margin[0]),
-        bar_length, bar_height,
-        boxstyle="round,pad=0.1",
-        edgecolor='none',
-        facecolor='black'
-    ))
+    # Draw scale bar.
+    if img.ndim == 3:  # first, assign black color
+        color = [0, 0, 0]
+    else:
+        color = 0
+    img[start_y - bar_height:start_y, end_x - bar_length_px:end_x] = color  # bar
 
     # Add text label
-    if bar_length1 > 1e3:  # then use microns
-        ax.text(
-            I.shape[1] - margin[1],
-            I.shape[0] - margin[0] - bar_height / 5,
-            f'{bar_length1 / 1e3:.1f} µm',
-            **font_props
-        )
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = img.shape[0] / 650  # scale font and thickness as fraction of image size
+    thickness = max(1, int(font_scale * 2.5))
+    if bar_length >= 1e3:  # then use microns
+        cv2.putText(img, f'{int(bar_length / 1e3)} um', (end_x - bar_length_px, int(start_y - 2.5 * bar_height)), 
+                    font, font_scale, color, thickness, cv2.LINE_AA)
     else:
-        ax.text(
-            I.shape[1] - margin[1],
-            I.shape[0] - margin[0] - bar_height / 5,
-            f'{bar_length1} nm',
-            **font_props
-        )
+        cv2.putText(img, f'{bar_length} nm', (end_x - bar_length_px, int(start_y - 2.5 * bar_height)), 
+                    font, font_scale, color, thickness, cv2.LINE_AA)
 
-    plt.draw()
+    return img
 
 
-def imshow_binary(img, img_binary, pixsize=None, opts=None):
+def imshow_binary(img, img_binary, pixsize=None, alpha=0.2, outline=True, colors=[(1, 0, 0.5)], image_alpha=0.7):
     # Parse inputs
     if isinstance(img, list):
         img = img[0]
     if isinstance(img_binary, list):
         img_binary = img_binary[0]
 
-    if opts is None:
-        opts = {}
-
-    # Set default options
-    cmap = opts.get('cmap', np.ones((int(np.max(img_binary)), 3)) * [1, 0, 0.5])
-    f_outline = opts.get('f_outline', True)
-    label_alpha = opts.get('label_alpha', 0.25)
-
-    # Overlay the binary mask on the image
-    t0 = label(img_binary)
-    t0 = label2rgb(t0, image=img, alpha=label_alpha, colors=cmap, bg_label=0, image_alpha=0.7)
-
-    if not f_outline:
-        i1 = t0
-    else:
-        # Calculate edges using Sobel filter
-        img_edge = sobel(img_binary)
-
-        # Dilate edges to strengthen the outline
-        se = disk(1)
-        img_dilated = np.logical_or(np.logical_and(dilation(img_edge, se), ~img_binary), img_edge)
-
-        # Add borders to labeled regions
-        i1 = (~img_dilated[..., np.newaxis]) * t0
+    if pixsize is not None:
+        img = overlay_scale(img, pixsize)
 
     # Display the image
-    plt.imshow(i1)
+    plt.imshow(img, cmap='gray', interpolation='none')
+    
+    # Get labels for plotting.
+    labels = label(img_binary)
+    mask = img_binary
+    image = Image.fromarray(img)
+
+    if np.any(mask):  # check if mask to plot (if no particles, would error)
+
+        # Step 1: Find all contours
+        contours = find_contours(mask, level=0.5)
+            
+        # Step 2: Separate outer and inner contours
+        outer_contours = []
+        hole_contours = []
+
+        for contour in contours:
+            y, x = np.mean(contour, axis=0)
+            if mask[int(y), int(x)] == 1:
+                outer_contours.append(contour)
+            else:
+                hole_contours.append(contour)
+
+        # Step 3: Create a compound polygon using matplotlib Path
+        def contour_to_path(contour, code_type):
+            verts = [(x, y) for y, x in contour]
+            codes = [Path.MOVETO] + [code_type] * (len(verts) - 1)
+            return verts, codes
+
+        vertices = []
+        codes = []
+
+        # Add outer boundary
+        for outer in outer_contours:
+            verts, cs = contour_to_path(outer, Path.LINETO)
+            vertices.extend(verts + [verts[0]])  # close path
+            codes.extend(cs + [Path.CLOSEPOLY])
+
+        # Add holes
+        for hole in hole_contours:
+            verts, cs = contour_to_path(hole, Path.LINETO)
+            vertices.extend(verts + [verts[0]])
+            codes.extend(cs + [Path.CLOSEPOLY])
+
+        # Create final compound path
+        compound_path = Path(vertices, codes)
+        patch = PathPatch(compound_path, 
+                        facecolor=to_rgba(colors[0], alpha=alpha), 
+                        edgecolor=colors[0], lw=0.5)
+
+        plt.gca().add_patch(patch)
+
     plt.axis('off')
 
 
-def imshow_binary2(imgs, imgs_binary, pixsizes=None, *args):
-    # Parse inputs
-    if not isinstance(imgs, list):
-        imgs = [imgs]
-    if not isinstance(imgs_binary, list):
-        imgs_binary = [imgs_binary]
+def imshow_binary2(imgs:list, imgs_binary:list, pixsizes:list=None, idx:list=None, **kwargs):
     
+    if not idx is None:
+        imgs = [imgs[ii] for ii in idx]
+        imgs_binary = [imgs_binary[ii] for ii in idx]
+        if not pixsizes == None:
+            pixsizes = [pixsizes[ii] for ii in idx]
+
+    else:
+        idx = np.arange(len(imgs))
+
     if len(imgs) > 24:  # only plot up to 24 images
         imgs = imgs[:24]
         imgs_binary = imgs_binary[:24]
+
     n_imgs = len(imgs)  # number of images
+
+    # Create None list of pixsizes, if not given, to avoid error below.
+    if pixsizes is None:
+        pixsizes = list(None for _ in range(n_imgs))
 
     # Prepare to tile and maximize figure if more than one image
     if n_imgs > 1:
@@ -244,106 +266,105 @@ def imshow_binary2(imgs, imgs_binary, pixsizes=None, *args):
         N1 = int(np.floor(np.sqrt(n_imgs)))
         N2 = int(np.ceil(n_imgs / N1))
     
+    plt.figure(figsize=(12, 12*N1/N2*1.1))
     for ii in range(n_imgs):
         if n_imgs > 1:
             plt.subplot(N1, N2, ii + 1)
-            plt.title(str(ii + 1))
+            plt.title(str(idx[ii]))
         
-        if pixsizes is None:
-            i1 = imshow_binary(imgs[ii], imgs_binary[ii], *args)
-        else:
-            i1 = imshow_binary(imgs[ii], imgs_binary[ii], pixsizes[ii], *args)
-        
-        if ii == 0:
-            h = plt.gca()  # store the handle of the first axis
-            i0 = i1  # store the first image for output
-    
-    if n_imgs > 1:
-        plt.show()
-    
-    f = plt.gcf()  # get the current figure
+        _ = imshow_binary(imgs[ii], imgs_binary[ii], pixsize=pixsizes[ii], **kwargs)
 
 
-def imshow_agg(Aggs, idx=None, f_img=True, opts=None):
+def imshow_beside(img, img_binary, *args):
+    
+    plt.clf()
+    
+    # Plot without overlay.
+    plt.subplot(1, 2, 1)
+    imshow(img)
+
+    # Plot with binary overlay.
+    plt.subplot(1, 2, 2)
+    imshow_binary(img, img_binary, *args)
+
+
+def imshow_agg(Aggs, imgs, imgs_binary, idx=None, 
+               f_img=True, f_show=False, f_scale=False, f_text=True, f_diam=True, f_dp=True, f_encl=False,
+               c=[1, 0, 0.5], **kwargs):
     # Parse inputs
-    if idx is None:
-        idx = np.unique([d['img_id'] for d in Aggs])
+    if np.any(idx == None):
+        idx = np.unique(Aggs['img_id'])
     else:
-        idx = list(set(Aggs[ii]['img_id'] for ii in idx))
+        idx = np.unique([Aggs.loc[ii]['img_id'] for ii in idx])
     
     if len(idx) > 24 and not isinstance(idx, list):
         idx = idx[:24]
     n_img = len(idx)
 
-    if opts is None:
-        opts = {
-            'cmap': [1, 0, 0.5],
-            'f_text': True,
-            'f_show': False,
-            'f_dp': True,
-            'f_scale': False,
-            'f_diam': True,
-            'f_all': True
-        }
-
-    if n_img > 1 and not opts['f_show']:
+    if n_img > 1 and not f_show:
         plt.figure()
     else:
         plt.gcf()
 
-    if n_img > 1 and not opts['f_show']:
+    if n_img > 1 and not f_show:
         N1 = int(np.floor(np.sqrt(n_img)))
         N2 = int(np.ceil(n_img / N1))
         plt.subplot(N1, N2, 1)
-    
-    frames = []
 
-    for ii in range(n_img):
-        if n_img > 1 and not opts['f_show']:
+    print('Collecting images for plotting:')
+    for ii in tqdm(range(n_img)):
+        if n_img > 1 and not f_show:
             plt.subplot(N1, N2, ii + 1)
 
         # Determine aggregates to plot for this image
-        img_idx = [i for i, agg in enumerate(Aggs) if agg['img_id'] == idx[ii]]
+        img_idx = Aggs.index[Aggs['img_id'] == idx[ii]].tolist()
         if not img_idx:
             print(f'Warning: No aggregates for image no. {idx[ii]}.')
             continue
 
         if f_img:
-            img_binary = np.zeros_like(Aggs[img_idx[0]]['image'])
+            img_binary = np.zeros_like(imgs[idx[ii]])
             for agg_idx in img_idx:
-                img_binary = np.logical_or(img_binary, Aggs[agg_idx]['binary'])
+                img_binary = np.logical_or(img_binary, imgs_binary[idx[ii]])
             
-            pixsize = Aggs[img_idx[0]]['pixsize'] if opts['f_scale'] else None
+            pixsize = Aggs[img_idx[0]]['pixsize'] if f_scale else None
 
             # Display the image with binary overlay
-            i0 = imshow_binary2(Aggs[img_idx[0]]['image'], img_binary, pixsize, opts)
+            imshow_binary(imgs[idx[ii]], img_binary, **kwargs)
             plt.title(str(idx[ii]))
         
         for agg_idx in img_idx:
-            agg = Aggs[agg_idx]
+            agg = Aggs.loc[agg_idx]
 
             # Plot an 'x' at the CoM. 
             plt.plot(agg['center_mass'][1], agg['center_mass'][0], 'xk', linewidth=0.75)
 
             # Plot ID of the aggregate at CoM. 
-            if opts['f_text']:
+            if f_text:
                 plt.text(agg['center_mass'][1] + 20, agg['center_mass'][0], str(agg['id']), color='black', size='small')
             
             # Plot Rg and da.
-            if opts['f_diam']:
-                plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), 
-                                           agg['Rg'] / agg['pixsize'], color=opts['cmap'], fill=False))
-                plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), 
-                                           agg['da'] / 2 / agg['pixsize'], color=np.array(opts['cmap']) * 0.25, fill=False, linewidth=1))
+            if f_diam:
+                plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), agg['Rg'] / agg['pixsize'], 
+                                           color=c, fill=False, linewidth=0.5))
+                plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), agg['da'] / 2 / agg['pixsize'], 
+                                           color=np.array(c) * 0.25, fill=False, linewidth=0.5))
+                
+            if f_encl:
+                # Add enclosing circle.
+                plt.gca().add_patch(Circle(agg['encl_c'], agg['encl_r'], 
+                                        color=np.array(c) * 0.25, fill=False, linewidth=0.5))
             
             # Plot primary particle diameter if present. 
-            if opts['f_dp'] and hasattr(agg, 'dp') and not np.isnan(agg.dp):
+            if f_dp and hasattr(agg, 'dp') and not np.isnan(agg.dp):
                 plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), 
-                                           agg['dp'] / 2 / agg['pixsize'], color=[0.92, 0.16, 0.49], fill=False, linewidth=0.75))
+                                           agg['dp'] / 2 / agg['pixsize'], color=[0.92, 0.16, 0.49], fill=False, linewidth=0.5))
 
-    plt.draw()
-    if n_img > 1:
-        plt.show()
+
+# Also, see agg.imshow(), which shows a cropped version of the aggregate.
+
+
+
 
 
 #=========================================================================#
@@ -375,38 +396,57 @@ def load_imgs(fd=None, n=None):
     """
     print('Loading images:')
 
-    if fd is None:
-        fd = askopenfilenames(filetypes=[('Image files', '*.tif *.jpg *.png')])
-        if not fd:
+    if fd is None:  # load using a window
+        fns = askopenfilenames(filetypes=[('Image files', '*.tif *.jpg *.png')])
+        if not fns:
             raise ValueError('No image selected.')
-        fd = list(fd)
-    elif isinstance(fd, str) and os.path.isdir(fd):
-        fd = [os.path.join(fd, f) for f in os.listdir(fd) if f.lower().endswith(('.tif', '.jpg', '.png'))]
-    elif isinstance(fd, str) and fd.lower().startswith('http'):
-        fd = [fd]
+        fns = list(fns)
+
+    elif isinstance(fd, str) and os.path.isdir(fd):  # load all images in folder
+        fns = [os.path.join(fd, f) for f in os.listdir(fd) if f.lower().endswith(('.tif', '.jpg', '.png'))]
+
+    elif isinstance(fd, str) and fd.lower().startswith('http'):  # load from the web
+        fns = [fd]
 
     if np.any(n is None):
-        n = np.arange(len(fd))
+        n = np.arange(len(fns))
 
-    Imgs = [{'fname': fd[i]} for i in n]
+    Imgs = [{'fname': fns[i]} for i in n]
 
     for img in tqdm(Imgs):
         img['raw'] = cv2.imread(img['fname'], cv2.IMREAD_GRAYSCALE)
 
     print('Images loaded.\n')
 
-    f_replace = 1
-    Imgs = detect_footer_scale(Imgs, f_replace)
+    # Consider using supplied pixsizes.csv in folder.
+    # Now default for test images. 
+    if os.path.exists(fd + '\\' + 'pixsizes.csv'):
+        pixsizes = pd.read_csv(fd + '\\' + 'pixsizes.csv', header=None).values[0]
 
+        for ii, img in enumerate(Imgs):
+            img['cropped'] = img['raw']
+            img['pixsize'] = pixsizes[ii]
+
+    # Otherwise, go searching for footer using dedicated function and OCR.
+    else:
+        try:
+            Imgs = detect_footer_scale(Imgs)
+
+        except:
+            print('Could not get pixel size.')
+            for img in Imgs:
+                img['cropped'] = img['raw']
+                img['pixsize'] = np.nan
+    
     imgs = [img['cropped'] for img in Imgs]
     pixsize = [img.get('pixsize', np.nan) for img in Imgs]
 
     print('Image import complete.\n')
 
-    return Imgs, imgs, pixsize
+    return imgs, pixsize, fns, Imgs
 
 
-def detect_footer_scale(Imgs, f_replace):
+def detect_footer_scale(Imgs):
     print('Looking for footers/scale:')
 
     for img in tqdm(Imgs):
@@ -429,6 +469,11 @@ def detect_footer_scale(Imgs, f_replace):
             ii = row_idx
             img['cropped'] = raw[:ii, :]
             footer = raw[ii:, :]
+
+            # Import pytesseract if required to use OCR.
+            import pytesseract
+            from pytesseract import Output
+            pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
             #-- Detecting magnification and/or pixel size ----------------#
             if pytesseract.pytesseract.get_tesseract_version():
@@ -478,6 +523,46 @@ def detect_footer_scale(Imgs, f_replace):
 
     return Imgs
 
+def extract_scale_bar(image_path):
+    # Step 1: Load the image
+    image = cv2.imread(image_path)
+    
+    # Step 2: Convert to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # Step 3: Apply thresholding to isolate bright/dark regions (adjust values if needed)
+    _, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)  # Adjust 200 if needed
+    
+    # Step 4: Find contours
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Step 5: Identify the largest rectangular contour (assumed to be the scale bar)
+    scale_bar = None
+    max_area = 0
+    
+    for contour in contours:
+        x, y, w, h = cv2.boundingRect(contour)
+        area = w * h
+        aspect_ratio = w / h if h > 0 else 0  # To filter long, thin objects
+        
+        # Adjust conditions based on your specific scale bar properties
+        if area > max_area and aspect_ratio > 2:  
+            max_area = area
+            scale_bar = (x, y, w, h)
+
+    if scale_bar:
+        x, y, w, h = scale_bar
+        scale_bar_region = image[y:y+h, x:x+w]
+        width = np.shape(scale_bar_region)[1]
+        
+        # Step 6: Save the extracted scale bar
+        print(f"Scale bar extracted. Length: {width}")
+        
+        return width
+    else:
+        print("No scale bar detected.")
+        return None
+
 
 def bbox2mask(bboxs, img_size):
     mask = np.zeros(img_size, dtype=np.uint8)
@@ -503,7 +588,10 @@ def load_dm3(fd, n=None):
 
     # Loop through dm3 files.
     for ii in tqdm(range(len(n))):
-        dm3f = dm3.DM3(fd + "\\" + fns[n[ii]])
+        try:
+            dm3f = dm3.DM3(fd + "\\" + fns[n[ii]])
+        except:
+            pass  # skip this file
         pixsizes[ii] = dm3f.pxsize[0]
         if dm3f.pxsize[1] == 'micron':
             pixsizes[ii] = pixsizes[ii] * 1000
@@ -511,15 +599,15 @@ def load_dm3(fd, n=None):
         img = dm3f.imagedata
 
         # Convert to uint8 image.
-        img = img / np.max(img)
-        img = 255 * img # Now scale by 255
-        img = img.astype(np.uint8)
+        img = img - np.min(img)  # adjust minimum to start at 0
+        img = 255 * (img / np.max(img))  # scale based on max. and cover 0 > 255
+        img = img.astype(np.uint8)  # convert to integer
         
         imgs[ii] = img
 
-    print('Import complete.\n')
+    textdone()
 
-    return imgs, pixsizes
+    return imgs, pixsizes, fns
 
 
 #=========================================================================#
@@ -581,6 +669,18 @@ def pcf(img_binary, v=None, ns=1e5):
     return g, v
 
 
+def enhance_contrast(imgs, contrast:float=1.0, brightness:int=0):
+    """
+    Adjusts contrast and brightness of an uint8 image.
+    contrast:   (0.0,  inf) with 1.0 leaving the contrast as is
+    brightness: [-255, 255] with 0 leaving the brightness as is
+    """
+    brightness += int(round(255 * (1 - contrast) / 2))
+    for ii in range(len(imgs)):
+        imgs[ii] = cv2.addWeighted(imgs[ii], contrast, imgs[ii], 0, brightness)
+    return imgs
+
+
 def loghist(y, n=20):
     x = np.logspace(np.log10(np.min(y)), np.log10(np.max(y)), n)
     dens, _ = np.histogram(y, bins=x)
@@ -591,23 +691,35 @@ def loghist(y, n=20):
     plt.stairs(dens, x)
     plt.xscale('log')
 
-    # Use optimization to find GMD and GSD.
+    print('Adding lognormal fits:')
+
+    # Get first guess for GMD and GSD.
     mu, sg = stats.norm.fit(np.log(y))
-    min_fun = lambda t: np.linalg.norm(stats.norm.pdf(np.log(x[0:-1]), t[0], t[1]) - t[2] * dens) ** 2
+    print(f'y(stats) ~ logn(mu={np.exp(mu)}, sg={np.exp(sg)})')
+
+    # Use optimization to find GMD and GSD.
+    min_fun = lambda t: np.linalg.norm(stats.norm.pdf(np.log(x[0:-1]), t[0], t[1]) - dens) ** 2
     x1 = op.fmin(min_fun, x0=[mu, sg, 1.], disp=None)
     mu = np.exp(x1[0])
     sg = np.exp(x1[1])
-    print(f'y ~ logn(mu={mu}, sg={sg})')
+    print(f'y(fit) ~ logn(mu={mu}, sg={sg})\n\n')
 
     # Add lognormal fit.
-    mu, sg = stats.norm.fit(np.log(y))
     xmin, xmax = plt.xlim()
     x = np.logspace(np.log10(xmin), np.log10(xmax), 100)
-    p = stats.norm.pdf(np.log(x), mu, sg)
+    p = stats.norm.pdf(np.log(x), np.log(mu), np.log(sg))
     plt.plot(x, p, 'k', linewidth=2)
 
     # Return GMD and GSD.
-    return np.exp(mu), np.exp(sg)
+    return mu, sg
+
+
+def textdone():
+    print('\r' +'\033[32m' + 'DONE!' + '\033[0m' + '\n')
+
+
+def textblue(txt):
+    print('\r' +'\033[34m' + str(txt) + '\033[0m' + '\n')
 
 
 #== SAVING AND LOAING DATA AND IMAGES ===================#
@@ -615,22 +727,100 @@ def save_data(fname, data):
     """
     Save dat files using pickle (e.g., Aggs structures).
     """
+    fd, _ = os.path.split(fname)
+    if not os.path.exists(fd):  # create folder if necessary
+        os.makedirs(fd)
+
+    print('Saving data ...')
     with open(fname, "wb") as file:
         pickle.dump(data, file)
+    textdone()
 
 
 def load_data(fname):
     """
     Load data files using pickle.
+    Outputs the same number of variables as was originally saved.
     """
+    print('Loading data ...')
     with open(fname, "rb") as file:
         out = pickle.load(file)
+    print(f'Loaded {str(len(out))} variables.')
+    textdone()
     return out
 
 
-def write_images(fname, imgs):
+def write_aggs(fname, Aggs):
     """
-    Load files using pickle.
+    Save Aggs structure to Excel.
     """
-    for img in imgs:
-        i = Image.fromarray(img)
+    fd, _ = os.path.split(fname)
+    if not os.path.exists(fd):  # create folder if necessary
+        os.makedirs(fd)
+
+    print('Writing Aggs ...')
+    if not isinstance(Aggs, pd.DataFrame):
+        Aggs = pd.DataFrame(Aggs)
+    Aggs = Aggs.drop(['image', 'binary'], axis=1)
+    Aggs.to_excel(fname, index = False)
+
+    textdone()
+
+
+def write_images(fd, imgs, pixsizes=None, fnames=None):
+    """
+    Write images in imgs to folder.
+    """
+    if not os.path.exists(fd):  # create folder if necessary
+        os.makedirs(fd)
+
+    if fnames == None:
+        fnames = ['' for _ in range(len(imgs))]
+        for ii in range(len(imgs)):
+            fnames[ii] = f"{fd}\\{str(ii).zfill(3)}.png"
+
+    # Add scale bar. 
+    if not pixsizes is None:
+        for ii in range(len(imgs)):
+            imgs[ii] = overlay_scale(imgs[ii], pixsizes[ii])
+
+    print('Writing images:')
+    for ii in tqdm(range(len(imgs))):
+        img = Image.fromarray(imgs[ii])
+        img.save(fnames[ii])
+    textdone()
+
+
+def write_binary(fd, imgs, imgs_binary, pixsizes=None, ext='svg', **kwargs):
+    """
+    Write binary masked images to folder.
+    """
+    if not os.path.exists(fd):  # create folder if necessary
+        os.makedirs(fd)
+
+    n_imgs = len(imgs)  # number of images after above processing
+
+    # Create None list of pixsizes, if not given, to avoid error below.
+    if pixsizes is None:
+        pixsizes = list(None for _ in range(n_imgs))
+
+    print('Writing figures (w/ binary mask):')
+    for ii in tqdm(range(n_imgs)):
+        imshow_binary(imgs[ii], imgs_binary[ii], pixsize=pixsizes[ii], **kwargs)
+        plt.savefig(f"{fd}\\{str(ii).zfill(3)}.{ext}", bbox_inches='tight')
+        plt.clf()
+    textdone()
+
+
+def dm32img(fd, n=None, ext='png'):
+    '''
+    Convert DM3 files to images.
+    '''
+
+    imgs, pixsizes, fns = load_dm3(fd, n)
+
+    print('Writing images:')
+    for ii in tqdm(range(len(imgs))):
+        cv2.imwrite(f'{fd}\\{fns[ii]}.{ext}', imgs[ii])
+    textdone()
+
