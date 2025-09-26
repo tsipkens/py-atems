@@ -9,7 +9,9 @@
 A python codebase to analyze TEM images of soot, which includes new methods associated with this project and a compilation of other pre-existing methods into a single Python package. The original implementation was a port of previous MATLAB code (https://github.com/tsipkens/atems), which was described by [Sipkens et al. (2023)][joss1]. 
 
 
-
+<p align="left">
+  <img width="350" src="docs/header.png">
+</p>
 
 
 ------
