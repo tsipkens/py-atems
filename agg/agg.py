@@ -24,9 +24,13 @@ from skimage.util import img_as_ubyte, invert
 from skimage import measure, morphology, filters
 from skimage.measure import label, regionprops
 try:
-    from skimage.morphology.footprint import rectangle  # Newer versions (0.22+)
-except ImportError:
-    from skimage.morphology import rectangle  # Older versions (pre-0.22)
+    from skimage.morphology import footprint_rectangle  # Newer versions (0.25+)
+    def rectangle(w, h): return footprint_rectangle((w, h))
+except:
+    try:
+        from skimage.morphology.footprint import rectangle  # Newer versions (0.22+)
+    except ImportError:
+        from skimage.morphology import rectangle  # Older versions (pre-0.22)
 
 # Machine learning tools.
 from sklearn.cluster import KMeans
