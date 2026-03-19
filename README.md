@@ -36,8 +36,6 @@ This code also contain an adaptation of **EDM-SBS** method of [Bescond et al. (2
 
 The **carboseg** method follows from collaborative work with [Max Frei](https://github.com/maxfrei750) and is associated with [Sipkens et al. (2021)][ptech.cnn]. 
 
-Finally, the progress bar in the function `tools.textbar`, which is used to indicate progress on some of the primary particle sizing techniques, is a modified version of that written by [Samuel Grauer](https://github.com/sgrauer). 
-
 #### How to cite
 
 On use of this code or the *k*-means segmentation procedure described [above](#k-means-segmentation-seg_kmeans), please cite: 
