@@ -19,12 +19,11 @@ import os
 import struct
 
 from PIL import Image
-
-import numpy
+import array  # combines with PIL to replace numpy
 
 __all__ = ["DM3", "VERSION", "SUPPORTED_DATA_TYPES"]
 
-VERSION = '1.2'
+VERSION = '1.2.TS'  # changed to exclude numpy
 
 debugLevel = 0   # 0=none, 1-3=basic, 4-5=simple, 6-10 verbose
 
@@ -619,116 +618,71 @@ class DM3(object):
 
     @property
     def imagedata(self):
-        """Extracts image data as numpy.array"""
+        """Extracts image data as a flat list (replaces numpy.array)"""
 
-        # numpy dtype strings associated to the various image dataTypes
-        dT_str = {
-            1: '<i2',     #16-bit LE signed integer
-            2: '<f4',     #32-bit LE floating point
-            6: 'u1',      #8-bit unsigned integer
-            7: '<i4',     #32-bit LE signed integer
-            9: 'i1',      #8-bit signed integer
-            10: '<u2',    #16-bit LE unsigned integer
-            11: '<u4',    #32-bit LE unsigned integer
-            14: 'u1',     #binary
+        # Python array type codes associated to the various image dataTypes
+        # Note: 'f' is 32-bit float, 'd' is 64-bit double, 'h' signed 16-bit, etc.
+        dT_typecode = {
+            1: 'h',       # 16-bit signed integer
+            2: 'f',       # 32-bit floating point
+            6: 'B',       # 8-bit unsigned integer
+            7: 'l',       # 32-bit signed integer
+            9: 'b',       # 8-bit signed integer
+            10: 'H',      # 16-bit unsigned integer
+            11: 'L',      # 32-bit unsigned integer
+            14: 'B',      # binary (8-bit unsigned)
             }
 
-        # get relevant Tags
         tag_root = 'root.ImageList.1'
         data_offset = int( self.tags["%s.ImageData.Data.Offset" % tag_root] )
         data_size = int( self.tags["%s.ImageData.Data.Size" % tag_root] )
         data_type = self._data_type
-        im_width = self._im_width
-        im_height = self._im_height
-        im_depth = self._im_depth
 
-        if self._debug > 0:
-            print("Notice: image data in %s starts at %s" % (
-                os.path.split(self._filename)[1], hex(data_offset)
-                ))
-
-        # check if image DataType is implemented, then read
-        if data_type in dT_str:
-            np_dt = numpy.dtype( dT_str[data_type] )
-            if self._debug > 0:
-                print("Notice: image data type: %s ('%s'), read as %s" % (
-                    data_type, dataTypes[data_type], np_dt
-                    ))
+        if data_type in dT_typecode:
             self._f.seek( data_offset )
-            # - fetch image data
-            rawdata = self._f.read(data_size)
-            # - convert raw to numpy array w/ correct dtype
-            ima = numpy.frombuffer(rawdata, dtype=np_dt)  # changed from "fromstring", used in earlier versions
-            # - reshape to matrix or stack
-            if im_depth > 1:
-                ima = ima.reshape(im_depth, im_height, im_width)
-            else:
-                ima = ima.reshape(im_height, im_width)
+            # Create array and fill with file data
+            ima = array.array(dT_typecode[data_type])
+            ima.fromfile(self._f, data_size // ima.itemsize)
+            
+            # Note: array.array is 1D. Reshaping is handled by PIL in the .Image property.
+            if data_type == 14:
+                ima = [1 if x > 0 else 0 for x in ima]
+            return ima
         else:
-            raise Exception(
-                "Cannot extract image data from %s: unimplemented DataType (%s:%s)." %
-                (os.path.split(self._filename)[1], data_type, dataTypes[data_type])
-                )
-
-        # if image dataType is BINARY, binarize image
-        # (i.e., px_value>0 is True)
-        if data_type == 14:
-            ima[ima>0] = 1
-
-        return ima
+            raise Exception("Unimplemented DataType")
 
 
     @property
     def Image(self):
         """Returns image data as PIL Image"""
-
-        # define PIL Image mode for the various (supported) image dataTypes,
-        # among:
         # - '1': 1-bit pixels, black and white, stored as 8-bit pixels
         # - 'L': 8-bit pixels, gray levels
         # - 'I': 32-bit integer pixels
         # - 'F': 32-bit floating point pixels
         dT_modes = {
-            1: 'I',     # 16-bit LE signed integer
+            1: 'I;16',     # 16-bit LE signed integer
             2: 'F',     # 32-bit LE floating point
             6: 'L',     # 8-bit unsigned integer
             7: 'I',     # 32-bit LE signed integer
-            9: 'I',     # 8-bit signed integer
-            10: 'I',    # 16-bit LE unsigned integer
+            9: 'I;8',     # 8-bit signed integer
+            10: 'I;16U',    # 16-bit LE unsigned integer
             11: 'I',    # 32-bit LE unsigned integer
             14: 'L',    # "binary"
             }
         
-        # define loaded array dtype if has to be fixed to match Image mode
-        dT_newdtypes = {
-            1:  'int32',      # 16-bit LE integer to 32-bit int
-            2:  'float32',    # 32-bit LE float to 32-bit float
-            9:  'int32',      # 8-bit signed integer to 32-bit int
-            10: 'int32',      # 16-bit LE u. integer to 32-bit int
-            }   
-
-        # get relevant Tags
-        data_type = self._data_type
-        im_width = self._im_width
-        im_height = self._im_height    
-        im_depth = self._im_depth
-
-        # fetch image data array
-        ima = self.imagedata
-        # assign Image mode
-        mode_ = dT_modes[data_type]
-
-        # reshape array if image stack
-        if im_depth > 1:
-            ima = ima.reshape(im_height*im_depth, im_width)
-
-        # load image data array into Image object (recast array if necessary)
-        if data_type in dT_newdtypes:
-            im = Image.fromarray(ima.astype(dT_newdtypes[data_type]),mode_)
-        else:
-            im = Image.fromarray(ima,mode_)
-
-        return im
+        tag_root = 'root.ImageList.1'
+        data_offset = int( self.tags["%s.ImageData.Data.Offset" % tag_root] )
+        data_size = int( self.tags["%s.ImageData.Data.Size" % tag_root] )
+        
+        self._f.seek(data_offset)
+        rawdata = self._f.read(data_size)
+        
+        # Use Image.frombytes to directly interpret the buffer
+        mode = dT_modes[self._data_type]
+        # Handle stack height for depth > 1
+        total_height = self._im_height * self._im_depth
+        
+        return Image.frombytes(mode.split(';')[0], (self._im_width, total_height), rawdata, 'raw', mode)
 
 
     @property
@@ -795,39 +749,16 @@ class DM3(object):
 
     @property
     def thumbnaildata(self):
-        """Fetch thumbnail image data as numpy.array"""
- 
-        # get useful thumbnail Tags
+        """Fetch thumbnail image data as a flat list"""
         tag_root = 'root.ImageList.0'
         tn_size = int( self.tags["%s.ImageData.Data.Size" % tag_root] )
         tn_offset = int( self.tags["%s.ImageData.Data.Offset" % tag_root] )
-        tn_width = int( self.tags["%s.ImageData.Dimensions.0" % tag_root] )
-        tn_height = int( self.tags["%s.ImageData.Dimensions.1" % tag_root] )
 
-        if self._debug > 0:
-            print("Notice: tn data in %s starts at %s" % (
-                os.path.split(self._filename)[1], hex(tn_offset)
-                ))
-            print("Notice: tn size: %sx%s px" % (tn_width, tn_height))
-
-        # get thumbnail data
-        if (tn_width*tn_height*4) == tn_size:
-            self._f.seek(tn_offset)
-            rawtndata = self._f.read(tn_size)
-            print('## rawdata:', len(rawtndata))
-           # - read as 32-bit LE unsigned integer
-            np_dt_tn = numpy.dtype('<u4')
-            tndata = numpy.fromstring(rawtndata, dtype=np_dt_tn)
-            print('## tndata:', len(tndata))
-            tndata = tndata.reshape(tn_height, tn_width)
-            # - rescale and convert to integer
-            tndata = tndata/65536. + 0.
-            tndata = tndata.astype(int)
-            # - return thumbnail data
-            return tndata
-        else:
-            raise Exception("Cannot extract thumbnail from %s"
-                            % os.path.split(self._filename)[1])
+        self._f.seek(tn_offset)
+        # Thumbnails are typically 4-byte (32-bit) unsigned ints
+        tndata = array.array('L')
+        tndata.fromfile(self._f, tn_size // 4)
+        return [int(x / 65536.) for x in tndata]
 
     def makePNGThumbnail(self, tn_file=''):
         """Save thumbnail as PNG file."""

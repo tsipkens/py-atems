@@ -648,9 +648,9 @@ def load_dm3(fd, n=None, to_scale=True):
             pass  # skip this file
         pixsizes[ii] = dm3f.pxsize[0]
         if dm3f.pxsize[1] == 'micron':
-            pixsizes[ii] = pixsizes[ii] * 1000
+            pixsizes[ii] = np.asarray(pixsizes[ii]) * 1000
 
-        img = dm3f.imagedata
+        img = np.asarray(dm3f.Image)  # convert to numpy array
 
         # Convert to uint8 image.
         img = img - np.min(img)  # adjust minimum to start at 0

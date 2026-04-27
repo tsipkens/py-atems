@@ -1,7 +1,6 @@
 import os
-import numpy as np
 import dm3_lib as dm3
-from PIL import Image, ImageDraw, ImageFont
+from PIL import ImageDraw, ImageFont
 
 def process_dm3():
     # Get current folder name and create a subfolder with that name
@@ -19,11 +18,28 @@ def process_dm3():
             f = dm3.DM3(fname)
             px_size = f.pxsize[0] * (1000 if f.pxsize[1] == 'micron' else 1)
             
-            # Normalize image to 0-255 uint8
-            data = f.imagedata.astype(float)
-            data = ((data - data.min()) / (data.max() - data.min()) * 255).astype(np.uint8)
-            img = Image.fromarray(data).convert('RGB')
+            # ---- Image normalization ----
+            # Now uses PIL operations.
+            # Normalize image to 0-255 uint8.
+            img = f.Image  # get Image directly from loader
+            if img.mode != 'F':  # convert to 'F' (float) to perform math
+                img = img.convert('F')
+
+            # Get min/max.
+            extrema = img.getextrema()
+            data_min, data_max = extrema[0], extrema[1]
+
+            # Normalize and scale to 0-255.
+            if data_max > data_min:
+                scale = 255.0 / (data_max - data_min)
+                img = img.point(lambda x: (x - data_min) * scale)
+
+            # Convert to 8-bit RGB for drawing.
+            img = img.convert('L').convert('RGB')
+
+            # Initialize draw.
             draw = ImageDraw.Draw(img)
+            # ----------------------------
             
             # ----- SCALE BAR -----
             # Calculate scale bar
