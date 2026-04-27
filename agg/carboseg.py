@@ -5,25 +5,21 @@ import os
 
 import numpy as np
 
-import albumentations as albu
+# import albumentations as albu
 import onnxruntime as ort
 
 from PIL import Image
 
-from skimage.morphology import disk, closing, opening, remove_small_objects
+from tools import tqdm2 as tqdm
 
-from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor
 
 
 class Classifier:
     """
     A class used to implement the neural network associated with carboseg.
     """
-
-    def __init__(
-            self,
-    ):
-
+    def __init__(self):
         self.checkpoint_path = Path(__file__).parent / "config\\FPN-resnet50-imagenet.onnx"
 
         self.onnx_session = ort.InferenceSession(str(self.checkpoint_path))
@@ -31,14 +27,30 @@ class Classifier:
 
     @staticmethod
     def validate_augmentation(image):
-        """ Validates the input image size. """
+        """ 
+        Validates the input image size by padding to 384x480. 
+        Pure NumPy replacement for albu.PadIfNeeded.
+        """
+        target_h, target_w = 384, 480
+        h, w = image.shape[:2]
 
-        # Add paddings to make image shape divisible by 32.
-        test_transform = [albu.PadIfNeeded(384, 480)]
-        fun = albu.Compose(test_transform)
+        # Calculate total padding needed
+        pad_h = max(0, target_h - h)
+        pad_w = max(0, target_w - w)
 
-        # Return validated image.
-        return fun(image=image)["image"]
+        # Split padding to apply it to both sides (Top/Bottom, Left/Right)
+        # This matches Albumentations default "center" padding
+        top = pad_h // 2
+        bottom = pad_h - top
+        left = pad_w // 2
+        right = pad_w - left
+
+        # Apply padding (constant 0/black is the default)
+        # Only pad the first two dimensions (H, W), not the color channels
+        if image.ndim == 3:
+            return np.pad(image, ((top, bottom), (left, right), (0, 0)), mode="constant")
+        else:
+            return np.pad(image, ((top, bottom), (left, right)), mode="constant")
 
     @staticmethod
     def to_tensor_image(x, **kwargs):
@@ -70,35 +82,33 @@ class Classifier:
         return x
 
     def preprocess(self, image):
-        """ Pre-process the image prior to classification. """
-
-        # Get preprocessing function, using default parameters (change if image does not meet these specs).
-        # See format_preprocess_input method above, for how these parameters are used.
+        """ 
+        Pre-process the image prior to classification using pure NumPy. 
+        Replaces Albumentations dependency for this step.
+        """
+        # 1. Define the ImageNet normalization parameters
         params = {
             "input_space": "RGB",
-            "input_size": [3, 224, 224],
             "input_range": [0, 1],
             "mean": [0.485, 0.456, 0.406],
             "std": [0.229, 0.224, 0.225],
         }
-        preprocessing_fun = functools.partial(self.format_preprocess_input, **params)
 
-        # Set up preprocessing.
-        _transform = [
-            albu.Lambda(image=preprocessing_fun),
-            albu.Lambda(image=self.to_tensor_image, mask=self.to_tensor_mask),
-        ]
-        fun = albu.Compose(_transform)
+        # 2. Run the formatting/normalization logic (Method you already have)
+        # This handles the RGB/BGR check and the Mean/Std subtraction
+        x = self.format_preprocess_input(image, **params)
 
-        # Apply processing and return result.
-        return fun(image=image)["image"]
+        # 3. Transpose to Tensor format: (H, W, C) -> (C, H, W)
+        # Using your existing static method logic
+        x = self.to_tensor_image(x)
+
+        return x
 
     def classify_image(self, image):
         """
         Run classifier on a single image.
         Takes a single PIL Image as input.
         """
-
         # Start by prepare image input for classification.
         image = np.asarray(image)
         image = self.validate_augmentation(image)
@@ -112,21 +122,56 @@ class Classifier:
         # Format and return prediction.
         return prediction.squeeze().round().astype(bool)
 
+    # def run(self, imgs):
+    #     """
+    #     Upper level wrapper to classify a series of images.
+    #     Takes a list of file paths as input.
+    #     """
+    #     predictions = [None] * len(imgs)  # initialize the predictions list
+
+    #     # Loop through images and generate predictions.
+    #     print("Performing carboseg segmentation:")
+    #     for ii in tqdm(range(len(imgs)), bar_format="{l_bar}{bar:15}{r_bar}{bar:-15b}"):
+    #         img = Image.fromarray(imgs[ii]).convert("RGB")  # read in image
+    #         predictions[ii] = self.classify_image(img)  # run classifier on image
+    #     print("DONE.\n")
+
+    #     return predictions
+    
     def run(self, imgs):
         """
-        Upper level wrapper to classify a series of images.
-        Takes a list of file paths as input.
+        Processes images in parallel batches of 3.
+        Maintains the fixed Batch=1 requirement of the ONNX model.
         """
+        if not imgs:
+            return []
 
-        predictions = [None] * len(imgs)  # initialize the predictions list
+        print(f"Performing carboseg segmentation (batch=3):")
+        
+        # Internal helper to handle the per-image logic
+        def process_one(img_data):
+            img = Image.fromarray(img_data).convert("RGB")
+            # Uses the NumPy preprocess/validate methods we built earlier
+            x = self.validate_augmentation(np.asarray(img))
+            x = self.preprocess(x)
+            
+            # Add the mandatory batch dimension of 1
+            input_tensor = np.expand_dims(x, 0).astype(np.float32)
+            
+            # Run inference
+            pred = self.onnx_session.run(None, {self.input_name: input_tensor})[0]
+            return pred.squeeze().round().astype(bool)
 
-        # Loop through images and generate predictions.
-        print("Performing carboseg segmentation:")
-        for ii in tqdm(range(len(imgs)), bar_format="{l_bar}{bar:15}{r_bar}{bar:-15b}"):
-            img = Image.fromarray(imgs[ii]).convert("RGB")  # read in image
-            predictions[ii] = self.classify_image(img)  # run classifier on image
+        # Execute with 3 threads
+        # This allows 3 images to be in different stages (prep/inference) at once
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            predictions = list(tqdm(
+                executor.map(process_one, imgs), 
+                total=len(imgs),
+                bar_format="{l_bar}{bar:15}{r_bar}{bar:-15b}"
+            ))
+
         print("DONE.\n")
-
         return predictions
 
     @staticmethod
