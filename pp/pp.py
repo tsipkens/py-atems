@@ -16,7 +16,8 @@ from skimage.transform import hough_circle, hough_circle_peaks
 
 import cv2
 
-from tqdm import tqdm
+# from tqdm import tqdm
+from tools import tqdm2 as tqdm
 
 # Import custom modules.
 import tools, agg
@@ -189,7 +190,7 @@ def pcm(Aggs, imgs_binary, f_plot=False, f_backup=False, opts=None):
         Aggs.loc[aa, 'dp_pcm'] = agg_aa['dp_pcm']
         Aggs.loc[aa, 'dp'] = agg_aa['dp_pcm']
 
-    tools.textdone()
+    print('\n')
 
     return Aggs
 
@@ -291,8 +292,8 @@ def edm_sbs(Aggs, imgs_binary, pixsizes=None):
     # Store average dp and sg over the entire set of samples in the first entry of Aggs
     Aggs.loc[0, 'dp_edm_tot'] = x1[0]
     Aggs.loc[0, 'sg_edm_tot'] = x1[1]
-    
-    tools.textdone()
+
+    print('\n')
 
     return Aggs, dp_bin, S, S_fit
 
@@ -333,6 +334,8 @@ def hough_simple(Aggs, f_plot=1, opts=None):
             plt.show()
 
         Aggs[aa]['dp_hough_simple'] = pixsize * np.mean(2 * radii)
+
+    print('\n')
 
     return Aggs
 
@@ -467,6 +470,8 @@ def hough_kook2(Aggs, f_plot=1, opts=None):
             Aggs[aa]['Pp_kook'] = Pp
             Aggs[aa]['dp_kook'] = Pp['dpg']
             Aggs[aa]['dp'] = Pp['dpg']
+
+    print('\n')
 
     return Aggs, centers, radii
 
