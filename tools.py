@@ -357,11 +357,6 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None,
     n_img = len(idx)
 
     if n_img > 1 and not f_show:
-        plt.figure()
-    else:
-        plt.gcf()
-
-    if n_img > 1 and not f_show:
         N1 = int(np.floor(np.sqrt(n_img)))
         N2 = int(np.ceil(n_img / N1))
         plt.subplot(N1, N2, 1)
