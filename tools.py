@@ -92,7 +92,7 @@ def load_config(fn):
     return opts
 
 
-def imshow(img, cmap=None, pixsize=None):
+def imshow(img, pixsize=None, cmap=None):
     """
     A modified version of imshow that formats images for this program.
     Timothy Sipkens, 2020-08-25
@@ -199,7 +199,7 @@ def overlay_scale(img, pixsize, frac=0.3):
     # Properties for scale bar
     margin = np.floor(np.array(img.shape[0:2]) * 0.05).astype(int)  # margin away from edge of the image
     bar_height = margin[1] // 5  # height of the bar
-    start_y, end_x = img.shape[1] - margin[1], img.shape[0] - margin[0]  # start positions for bar
+    start_y, end_x = img.shape[0] - margin[1], img.shape[1] - margin[0]  # start positions for bar
 
     # Draw scale bar.
     if img.ndim == 3:  # first, assign black color
@@ -233,7 +233,7 @@ def imshow_binary(img, img_binary, pixsize=None, alpha=0.2, outline=True, colors
         img = overlay_scale(img, pixsize)
 
     # Display the image
-    plt.imshow(img, cmap='gray', interpolation='none')
+    plt.imshow(img, cmap='gray')
     
     # Get labels for plotting.
     labels = label(img_binary)
@@ -344,7 +344,7 @@ def imshow_beside(img, img_binary, *args):
 
 def imshow_agg(Aggs, imgs, imgs_binary, idx=None, 
                f_img=True, f_show=False, f_scale=False, f_text=True, f_diam=True, f_dp=True, f_encl=False,
-               c=[1, 0, 0.5], **kwargs):
+               color=[1, 0, 0.5], **kwargs):
     
     # Parse inputs
     if np.any(idx == None):
@@ -377,10 +377,10 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None,
             for agg_idx in img_idx:
                 img_binary = np.logical_or(img_binary, imgs_binary[idx[ii]])
             
-            pixsize = Aggs[img_idx[0]]['pixsize'] if f_scale else None
+            pixsize = Aggs.iloc[img_idx[0]]['pixsize'] if f_scale else None
 
             # Display the image with binary overlay
-            imshow_binary(imgs[idx[ii]], img_binary, **kwargs)
+            imshow_binary(imgs[idx[ii]], img_binary, pixsize=pixsize, colors=[color], **kwargs)
             plt.title(str(idx[ii]))
         
         for agg_idx in img_idx:
@@ -396,14 +396,14 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None,
             # Plot Rg and da.
             if f_diam:
                 plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), agg['Rg'] / agg['pixsize'], 
-                                           color=c, fill=False, linewidth=0.5))
+                                           color=color, fill=False, linewidth=0.5))
                 plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), agg['da'] / 2 / agg['pixsize'], 
-                                           color=np.array(c) * 0.25, fill=False, linewidth=0.5))
+                                           color=np.array(color) * 0.25, fill=False, linewidth=0.5))
                 
             if f_encl:
                 # Add enclosing circle.
                 plt.gca().add_patch(Circle(agg['encl_c'], agg['encl_r'], 
-                                        color=np.array(c) * 0.25, fill=False, linewidth=0.5))
+                                        color=np.array(color) * 0.25, fill=False, linewidth=0.5))
             
             # Plot primary particle diameter if present. 
             if f_dp and hasattr(agg, 'dp') and not np.isnan(agg.dp):

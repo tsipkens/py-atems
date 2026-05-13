@@ -18,5 +18,5 @@ Aggs = agg.analyze_binary(imgs_binary, pixsizes, imgs, None)
 Aggs = pp.pcm(Aggs, imgs_binary)
 
 plt.figure(figsize=(15, 10))
-tools.imshow_agg(Aggs, imgs, imgs_binary)
+tools.imshow_agg(Aggs, imgs, imgs_binary, pixsizes)
 plt.show()
