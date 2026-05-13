@@ -501,8 +501,6 @@ def seg_carboseg(imgs, pixsizes=None, opts=None):
             
             # imgs_binary[ii] = remove_small_objects(i7, min_size=20).T
 
-    tools.textdone()  # print green DONE! text
-
     return imgs_binary
 
 
@@ -728,8 +726,6 @@ def analyze_binary(imgs_binary, pixsize, imgs, fname=None, remove_edge_aggs=Fals
             plt.show()
 
     Aggs = pd.DataFrame(Aggs)  # convert to DataFrame
-
-    tools.textdone()
 
     return Aggs
 
