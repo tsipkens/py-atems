@@ -419,7 +419,7 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None,
 #=========================================================================#
 #== UTILITIES TO LOAD IMAGES =============================================#
 #=========================================================================#
-def load_imgs(fd=None, n=None):
+def load_imgs(fd=None, n=None, detect_footer=True):
     """
     LOAD_IMGS  Loads images from files.
      
@@ -470,7 +470,7 @@ def load_imgs(fd=None, n=None):
     # Consider using supplied pixsizes.csv in folder.
     # Now default for test images. 
     if os.path.exists(fd + '\\' + 'pixsizes.csv'):
-        pixsizes = pd.read_csv(fd + '\\' + 'pixsizes.csv', header=None).values[0]
+        pixsizes = load_pixsizes(fd)
 
         for ii, img in enumerate(Imgs):
             img['cropped'] = img['raw']
@@ -479,8 +479,12 @@ def load_imgs(fd=None, n=None):
     # Otherwise, go searching for footer using dedicated function and OCR.
     else:
         try:
-            Imgs = detect_footer_scale(Imgs)
+            import pytesseract
+        except:
+            print('pytesseract not found.')
 
+        try:
+            Imgs = detect_footer_scale(Imgs)
         except:
             print('Could not get pixel size.')
             for img in Imgs:
@@ -523,6 +527,7 @@ def detect_footer_scale(Imgs):
             import pytesseract
             from pytesseract import Output
             pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+            print(pytesseract.pytesseract.get_tesseract_version())
 
             #-- Detecting magnification and/or pixel size ----------------#
             if pytesseract.pytesseract.get_tesseract_version():
@@ -619,6 +624,25 @@ def bbox2mask(bboxs, img_size):
         x, y, w, h = bbox
         mask[y:y+h, x:x+w] = 1
     return mask
+
+
+# ---------- Utilities to load and save pixel sizes ------------ #
+def load_pixsizes(fd, file='pixsizes.csv', filenames=None):
+    df = pd.read_csv(os.path.join(fd, file), header=0)
+    if filenames is not None:
+        df = df[df['filenames'].isin([os.path.basename(path) for path in filenames])]
+    pixsizes = df['pixsizes'].values.flatten()
+    return pixsizes
+
+def write_pixsizes(fd, pixsizes, file='pixsizes.csv', filenames=None):
+    if filenames is None:
+        df = {'pixsizes': pixsizes}
+    else:
+        filenames = [os.path.basename(path) for path in filenames]
+        df = {'pixsizes': pixsizes, 'filenames': filenames}
+    df = pd.DataFrame(df)
+    df.to_csv(os.path.join(fd, file), index=False)
+# -------------------------------------------------------------- #
 
 
 def load_dm3(fd, n=None, to_scale=True):
