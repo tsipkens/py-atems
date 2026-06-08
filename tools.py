@@ -348,6 +348,9 @@ def imshow_beside(img, img_binary, *args):
     plt.subplot(1, 2, 2)
     imshow_binary(img, img_binary, *args)
 
+    # Plot with binary overlay.
+    plt.subplot(1, 2, 2)
+    imshow_binary(img, img_binary, *args)
 
 def imshow_agg(Aggs, imgs, imgs_binary, idx=None, 
                f_img=True, f_show=False, f_scale=False, f_text=True, f_diam=True, f_dp=True, f_encl=False,
