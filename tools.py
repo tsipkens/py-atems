@@ -9,6 +9,8 @@ from matplotlib.patches import Circle, PathPatch
 from matplotlib.path import Path
 from matplotlib.colors import to_rgba
 
+from operator import itemgetter
+
 import cv2
 
 from tkinter.filedialog import askopenfilenames
@@ -75,8 +77,13 @@ class tqdm2(tqdm):
             )
         else:
             return super().format_meter(n, total, elapsed, **kwargs)
-    
-    
+
+class Indexer:
+    def __init__(self, idx):
+        self.idx = idx
+    def __call__(self, arr):
+        return [arr[ii] for ii in self.idx]
+
 def load_config(fn):
     """
     Loads configuration files (either JSON or YAML).
@@ -419,7 +426,7 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None,
 #=========================================================================#
 #== UTILITIES TO LOAD IMAGES =============================================#
 #=========================================================================#
-def load_imgs(fd=None, n=None, detect_footer=True):
+def load_imgs(fd=None, n=None, detect=False):
     """
     LOAD_IMGS  Loads images from files.
      
@@ -467,11 +474,14 @@ def load_imgs(fd=None, n=None, detect_footer=True):
 
     print('Images loaded.\n')
 
+    if not detect:
+        return [img['raw'] for img in Imgs]
+
+    # ------ Extra processing to detect footer and scale, if desired ------ #
     # Consider using supplied pixsizes.csv in folder.
     # Now default for test images. 
     if os.path.exists(fd + '\\' + 'pixsizes.csv'):
         pixsizes = load_pixsizes(fd)
-
         for ii, img in enumerate(Imgs):
             img['cropped'] = img['raw']
             img['pixsize'] = pixsizes[ii]
@@ -496,7 +506,7 @@ def load_imgs(fd=None, n=None, detect_footer=True):
 
     print('Image import complete.\n')
 
-    return imgs, pixsize, fns, Imgs
+    return imgs, pixsize, fns
 
 
 def detect_footer_scale(Imgs):
@@ -527,7 +537,6 @@ def detect_footer_scale(Imgs):
             import pytesseract
             from pytesseract import Output
             pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-            print(pytesseract.pytesseract.get_tesseract_version())
 
             #-- Detecting magnification and/or pixel size ----------------#
             if pytesseract.pytesseract.get_tesseract_version():
