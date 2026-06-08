@@ -46,7 +46,7 @@ Users of the pair correlation method (PCM), the Euclidean distance mapping-surfa
 
 When using the CNN method (e.g., carboseg) please cite
 
-> [Sipkens, T.A., Frei, M., Baldelli, A., Kirchen, P., Kruis, F. E., & Rogak, S. N. (In Press). Characterizing soot in TEM images using a convolutional neural network. Powder Technology.][ptech.cnn]
+> [Sipkens, T.A., Frei, M., Baldelli, A., Kirchen, P., Kruis, F. E., & Rogak, S. N. (2021) Characterizing soot in TEM images using a convolutional neural network. Powder Technology.][ptech.cnn]
 
 and see the [CarbonBlackSegmentation](https://github.com/maxfrei750/CarbonBlackSegmentation) repository for information on training. 
 
