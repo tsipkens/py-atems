@@ -34,9 +34,7 @@ Also included with this program is an adaptation the MATLAB code of [Kook et al.
 
 This code also contain an adaptation of **EDM-SBS** method of [Bescond et al. (2014)][bescond]. We thank the authors, in particular Jérôme Yon, for their help in understanding their original [Scilab code and ImageJ plugin](https://www.coria.fr/en/edm-sbs-automated-analysis-of-tem-images/). Modifications to allow the method to work directly on binary images (rather than a custom output from ImageJ) and to integrate the method into the MATLAB environment may present some minor compatibility issues, but allows use of the aggregate segmentation methods given in the **agg** package. 
 
-The **carboseg** method follows from collaborative work with [Max Frei](https://github.com/maxfrei750) and is associated with [Sipkens et al. (2021)][ptech.cnn]. 
-
-Finally, the progress bar in the function `tools.textbar`, which is used to indicate progress on some of the primary particle sizing techniques, is a modified version of that written by [Samuel Grauer](https://github.com/sgrauer). 
+The **carboseg** method follows from collaborative work with [Max Frei](https://github.com/maxfrei750) and is associated with [Sipkens et al. (2021)][ptech.cnn]. The corresponding ONNX file is available **[here](https://github.com/maxfrei750/CarbonBlackSegmentation/releases/download/v1.0/FPN-resnet50-imagenet.onnx)**. 
 
 #### How to cite
 
@@ -48,7 +46,7 @@ Users of the pair correlation method (PCM), the Euclidean distance mapping-surfa
 
 When using the CNN method (e.g., carboseg) please cite
 
-> [Sipkens, T.A., Frei, M., Baldelli, A., Kirchen, P., Kruis, F. E., & Rogak, S. N. (In Press). Characterizing soot in TEM images using a convolutional neural network. Powder Technology.][ptech.cnn]
+> [Sipkens, T.A., Frei, M., Baldelli, A., Kirchen, P., Kruis, F. E., & Rogak, S. N. (2021) Characterizing soot in TEM images using a convolutional neural network. Powder Technology.][ptech.cnn]
 
 and see the [CarbonBlackSegmentation](https://github.com/maxfrei750/CarbonBlackSegmentation) repository for information on training. 
 

@@ -5,9 +5,11 @@ from numpy.lib.stride_tricks import as_strided
 import matplotlib.pyplot as plt
 
 import pandas as pd
-import tabulate  # only used for displaying Aggs structure
+import tabulate  # only used for displaying Aggs
 
-from tqdm import tqdm
+# from tqdm import tqdm
+from tools import tqdm2 as tqdm
+
 import os
 
 import cv2
@@ -24,9 +26,13 @@ from skimage.util import img_as_ubyte, invert
 from skimage import measure, morphology, filters
 from skimage.measure import label, regionprops
 try:
-    from skimage.morphology.footprint import rectangle  # Newer versions (0.22+)
-except ImportError:
-    from skimage.morphology import rectangle  # Older versions (pre-0.22)
+    from skimage.morphology import footprint_rectangle  # Newer versions (0.25+)
+    def rectangle(w, h): return footprint_rectangle((w, h))
+except:
+    try:
+        from skimage.morphology.footprint import rectangle  # Newer versions (0.22+)
+    except ImportError:
+        from skimage.morphology import rectangle  # Older versions (pre-0.22)
 
 # Machine learning tools.
 from sklearn.cluster import KMeans
@@ -248,7 +254,7 @@ def seg_kmeans(imgs:list, pixsizes:list, v:str='default'):
     img_kmeans = [None] * n
     feature_set = [None] * n
 
-    print(f'Performing k-means segmentation (v. = {v}).')
+    print(f'Performing k-means segmentation (v={v}).')
     for ii in tqdm(range(n)):
         img = imgs[ii]
         pixsize = pixsizes[ii]
@@ -457,8 +463,9 @@ def seg_carboseg(imgs, pixsizes=None, opts=None):
 
     Adds morphological rolling ball operation.
     """
-
-    from agg.carboseg import Classifier  # import Classifier class
+    from agg import carboseg
+    import importlib
+    importlib.reload(carboseg)
 
     # Resize images to match classifier.
     # This will results in some stretch and possibly changes in image texture.
@@ -470,7 +477,7 @@ def seg_carboseg(imgs, pixsizes=None, opts=None):
         imgs[ii] = imgs[ii].resize((2240, 1952))
         imgs[ii] = np.array(imgs[ii])
 
-    classifier = Classifier()  # create an instance of the classifier
+    classifier = carboseg.Classifier()  # create an instance of the classifier
     imgs_binary = classifier.run(imgs)  # run the classifier to get predictions
     
     # Resize back to original size for output.
@@ -493,8 +500,6 @@ def seg_carboseg(imgs, pixsizes=None, opts=None):
             # i7 = opening(i7, se7)
             
             # imgs_binary[ii] = remove_small_objects(i7, min_size=20).T
-
-    tools.textdone()  # print green DONE! text
 
     return imgs_binary
 
@@ -569,7 +574,8 @@ def analyze_binary(imgs_binary, pixsize, imgs, fname=None, remove_edge_aggs=Fals
         fname = [Imgs['fname']]
     else:
         if not isinstance(imgs_binary, list):
-            imgs_binary = [imgs_binary]
+            if not isinstance(imgs_binary, np.ndarray):
+                imgs_binary = [imgs_binary]
 
     if pixsize is None:
         pixsize = [1] * len(imgs_binary)
@@ -721,8 +727,6 @@ def analyze_binary(imgs_binary, pixsize, imgs, fname=None, remove_edge_aggs=Fals
 
     Aggs = pd.DataFrame(Aggs)  # convert to DataFrame
 
-    tools.textdone()
-
     return Aggs
 
 
@@ -806,41 +810,40 @@ def box_counting(img_binary):
 
 
 # CROPPING AND IMAGE MAPPING ==============================================================#
-def autocrop(img_binary, img_orig=None):
+def autocrop(img_binary, img_orig=None, padding=3):
     """
     Produces rect and cropped version of images.
     """
     x, y = np.where(img_binary)
 
-    space = 3
     size_img = img_binary.shape
 
-    x_top = min(max(x) + space, size_img[0])
-    x_bottom = max(min(x) - space, 0)
-    y_top = min(max(y) + space, size_img[1])
-    y_bottom = max(min(y) - space, 0)
+    x_top = min(max(x) + padding, size_img[0])
+    x_bottom = max(min(x) - padding, 0)
+    y_top = min(max(y) + padding, size_img[1])
+    y_bottom = max(min(y) - padding, 0)
 
     rect = [y_bottom, x_bottom, y_top - y_bottom, x_top - x_bottom]
     
     img_binary_cropped= crop(img_binary, rect)
 
     # Also crop original image.
-    if not img_orig == None:
+    if not img_orig is None:
         img_cropped = crop(img_orig, rect)
         return rect, img_binary_cropped, img_cropped 
     else:
         return rect, img_binary_cropped
     
 
-def crop(img, rect, border=0):
+def crop(img, rect, padding=0):
     """
     Use rect to crop image.
     """
-    min1 = np.maximum(rect[1] - border, 0)
-    max1 = np.minimum(rect[1] + rect[3] + border, np.shape(img)[0])
+    min1 = np.maximum(rect[1] - padding, 0)
+    max1 = np.minimum(rect[1] + rect[3] + padding, np.shape(img)[0])
     
-    min2 = np.maximum(rect[0] - border, 0)
-    max2 = np.minimum(rect[0] + rect[2] + border, np.shape(img)[1])
+    min2 = np.maximum(rect[0] - padding, 0)
+    max2 = np.minimum(rect[0] + rect[2] + padding, np.shape(img)[1])
 
     return img[min1:max1, min2:max2]
 
@@ -876,12 +879,16 @@ def get_binary(imgs_binary, Aggs, idx=0):
     return (labeled_mask == label_at_pixel).astype(bool)  # return mask of the selected object
 
 
-def imshow(Aggs, imgs, imgs_binary, idx=0, border=25):
+def imshow(Aggs, imgs, imgs_binary, idx=0, padding=50, dp_type=''):
     """
     Show a masked version of a single aggregate. 
     """
-    i0 = crop_agg(imgs, Aggs, idx=idx, border=25)
-    i1 = crop(get_binary(imgs_binary, Aggs, idx=idx), Aggs['rect'][idx], border=border)
+
+    if not dp_type == '':
+        dp_type = "_" + dp_type
+
+    i0 = crop_agg(imgs, Aggs, idx=idx, padding=padding)
+    i1 = crop(get_binary(imgs_binary, Aggs, idx=idx), Aggs['rect'][idx], padding=padding)
 
     tools.imshow_binary(i0, i1)
 
@@ -889,7 +896,7 @@ def imshow(Aggs, imgs, imgs_binary, idx=0, border=25):
     Rg = Aggs['Rg'][idx] / Aggs['pixsize'][idx]
     ra = Aggs['da'][idx] / 2 / Aggs['pixsize'][idx]
     rect = Aggs['rect'][idx]
-    center = (Aggs['center_mass'][idx][1] - rect[0] + border, Aggs['center_mass'][idx][0] - rect[1] + border)
+    center = (Aggs['center_mass'][idx][1] - rect[0] + padding, Aggs['center_mass'][idx][0] - rect[1] + padding)
 
     # Generate points.
     theta = np.linspace(0, 2 * np.pi, 100)
@@ -897,11 +904,17 @@ def imshow(Aggs, imgs, imgs_binary, idx=0, border=25):
     # Plot circles.
     x = center[0] + Rg * np.cos(theta)
     y = center[1] + Rg * np.sin(theta)
-    plt.plot(x, y, '--', linewidth=3, color=[0.92, 0.16, 0.49])
+    plt.plot(x, y, '--', linewidth=1, color='k')
 
     x = center[0] + ra * np.cos(theta)
     y = center[1] + ra * np.sin(theta)
     plt.plot(x, y, '-', linewidth=3, color=[0.92, 0.16, 0.49])
+
+    if 'dp' in Aggs.columns:
+        dp = Aggs[f'dp{dp_type}'][idx] / Aggs['pixsize'][idx]
+        x = center[0] + dp / 2 * np.cos(theta)
+        y = center[1] + dp / 2 * np.sin(theta)
+        plt.plot(x, y, '-', linewidth=3, color='k')
 
 
 def match(Aggs1, Aggs2, tol=20):

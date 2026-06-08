@@ -9,6 +9,8 @@ from matplotlib.patches import Circle, PathPatch
 from matplotlib.path import Path
 from matplotlib.colors import to_rgba
 
+from operator import itemgetter
+
 import cv2
 
 from tkinter.filedialog import askopenfilenames
@@ -24,9 +26,63 @@ import yaml
 import os, csv
 import pickle
 import pandas as pd
+from pathlib import Path as PathlibPath
 
 import dm3_lib as dm3
 
+# ANSI color codes
+GREEN = "\033[92m"
+BLUE = "\033[96m"
+GRAY = "\033[30m"  # alt. 90m
+RESET = "\033[0m"
+
+# custom_format = f"{{percentage:3.0f}}%|{GREEN}{{bar:25}}{RESET}| {{n_fmt}}/{{total_fmt}} [{{elapsed}}<{{remaining}}]"
+# def tqdm2(*args, **kwargs):
+#     return tqdm(*args, **kwargs, ascii=' ▌█', bar_format=custom_format)
+
+class tqdm2(tqdm):
+    def format_meter(self, n, total, elapsed, **kwargs):
+        if total:
+            frac = n / total
+            bar_length = 25
+
+            filled_len = int(bar_length * frac)
+            empty_len = bar_length - filled_len
+
+            if frac >= 1:
+                bar = (
+                    GREEN + "█" * filled_len + RESET +
+                    GRAY + "█" * empty_len + RESET
+                )
+            else:
+                bar = (
+                    BLUE + "█" * filled_len + RESET +
+                    GRAY + "█" * empty_len + RESET
+                )
+
+            # Percentage
+            percentage = f"{100 * frac:3.0f}%"
+
+            # Timing
+            rate = n / elapsed if elapsed > 0 else 0
+            remaining = (total - n) / rate if rate > 0 else 0
+
+            elapsed_str = self.format_interval(elapsed)
+            remaining_str = self.format_interval(remaining) if rate > 0 else "??:??"
+
+            return (
+                f"{percentage}|{bar}| "
+                f"[{n}/{total}] "
+                f"[{elapsed_str}<{remaining_str}]"
+            )
+        else:
+            return super().format_meter(n, total, elapsed, **kwargs)
+
+class Indexer:
+    def __init__(self, idx):
+        self.idx = idx
+    def __call__(self, arr):
+        return [arr[ii] for ii in self.idx]
 
 def load_config(fn):
     """
@@ -43,7 +99,7 @@ def load_config(fn):
     return opts
 
 
-def imshow(img, cmap=None, pixsize=None):
+def imshow(img, pixsize=None, cmap=None):
     """
     A modified version of imshow that formats images for this program.
     Timothy Sipkens, 2020-08-25
@@ -150,7 +206,7 @@ def overlay_scale(img, pixsize, frac=0.3):
     # Properties for scale bar
     margin = np.floor(np.array(img.shape[0:2]) * 0.05).astype(int)  # margin away from edge of the image
     bar_height = margin[1] // 5  # height of the bar
-    start_y, end_x = img.shape[1] - margin[1], img.shape[0] - margin[0]  # start positions for bar
+    start_y, end_x = img.shape[0] - margin[1], img.shape[1] - margin[0]  # start positions for bar
 
     # Draw scale bar.
     if img.ndim == 3:  # first, assign black color
@@ -184,7 +240,7 @@ def imshow_binary(img, img_binary, pixsize=None, alpha=0.2, outline=True, colors
         img = overlay_scale(img, pixsize)
 
     # Display the image
-    plt.imshow(img, cmap='gray', interpolation='none')
+    plt.imshow(img, cmap='gray')
     
     # Get labels for plotting.
     labels = label(img_binary)
@@ -192,6 +248,11 @@ def imshow_binary(img, img_binary, pixsize=None, alpha=0.2, outline=True, colors
     image = Image.fromarray(img)
 
     if np.any(mask):  # check if mask to plot (if no particles, would error)
+
+        _, num_objects = label(mask, return_num=True)
+        if num_objects > 50:
+            plt.axis('off')
+            return  # too many to plot, so meaningless, exit function
 
         # Step 1: Find all contours
         contours = find_contours(mask, level=0.5)
@@ -287,10 +348,14 @@ def imshow_beside(img, img_binary, *args):
     plt.subplot(1, 2, 2)
     imshow_binary(img, img_binary, *args)
 
+    # Plot with binary overlay.
+    plt.subplot(1, 2, 2)
+    imshow_binary(img, img_binary, *args)
 
 def imshow_agg(Aggs, imgs, imgs_binary, idx=None, 
                f_img=True, f_show=False, f_scale=False, f_text=True, f_diam=True, f_dp=True, f_encl=False,
-               c=[1, 0, 0.5], **kwargs):
+               color=[1, 0, 0.5], **kwargs):
+    
     # Parse inputs
     if np.any(idx == None):
         idx = np.unique(Aggs['img_id'])
@@ -302,17 +367,12 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None,
     n_img = len(idx)
 
     if n_img > 1 and not f_show:
-        plt.figure()
-    else:
-        plt.gcf()
-
-    if n_img > 1 and not f_show:
         N1 = int(np.floor(np.sqrt(n_img)))
         N2 = int(np.ceil(n_img / N1))
         plt.subplot(N1, N2, 1)
 
     print('Collecting images for plotting:')
-    for ii in tqdm(range(n_img)):
+    for ii in tqdm2(range(n_img)):
         if n_img > 1 and not f_show:
             plt.subplot(N1, N2, ii + 1)
 
@@ -327,10 +387,10 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None,
             for agg_idx in img_idx:
                 img_binary = np.logical_or(img_binary, imgs_binary[idx[ii]])
             
-            pixsize = Aggs[img_idx[0]]['pixsize'] if f_scale else None
+            pixsize = Aggs.iloc[img_idx[0]]['pixsize'] if f_scale else None
 
             # Display the image with binary overlay
-            imshow_binary(imgs[idx[ii]], img_binary, **kwargs)
+            imshow_binary(imgs[idx[ii]], img_binary, pixsize=pixsize, colors=[color], **kwargs)
             plt.title(str(idx[ii]))
         
         for agg_idx in img_idx:
@@ -346,14 +406,14 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None,
             # Plot Rg and da.
             if f_diam:
                 plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), agg['Rg'] / agg['pixsize'], 
-                                           color=c, fill=False, linewidth=0.5))
+                                           color=color, fill=False, linewidth=0.5))
                 plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), agg['da'] / 2 / agg['pixsize'], 
-                                           color=np.array(c) * 0.25, fill=False, linewidth=0.5))
+                                           color=np.array(color) * 0.25, fill=False, linewidth=0.5))
                 
             if f_encl:
                 # Add enclosing circle.
                 plt.gca().add_patch(Circle(agg['encl_c'], agg['encl_r'], 
-                                        color=np.array(c) * 0.25, fill=False, linewidth=0.5))
+                                        color=np.array(color) * 0.25, fill=False, linewidth=0.5))
             
             # Plot primary particle diameter if present. 
             if f_dp and hasattr(agg, 'dp') and not np.isnan(agg.dp):
@@ -366,11 +426,10 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None,
 
 
 
-
 #=========================================================================#
 #== UTILITIES TO LOAD IMAGES =============================================#
 #=========================================================================#
-def load_imgs(fd=None, n=None):
+def load_imgs(fd=None, n=None, detect=False):
     """
     LOAD_IMGS  Loads images from files.
      
@@ -413,16 +472,19 @@ def load_imgs(fd=None, n=None):
 
     Imgs = [{'fname': fns[i]} for i in n]
 
-    for img in tqdm(Imgs):
+    for img in tqdm2(Imgs):
         img['raw'] = cv2.imread(img['fname'], cv2.IMREAD_GRAYSCALE)
 
     print('Images loaded.\n')
 
+    if not detect:
+        return [img['raw'] for img in Imgs]
+
+    # ------ Extra processing to detect footer and scale, if desired ------ #
     # Consider using supplied pixsizes.csv in folder.
     # Now default for test images. 
     if os.path.exists(fd + '\\' + 'pixsizes.csv'):
-        pixsizes = pd.read_csv(fd + '\\' + 'pixsizes.csv', header=None).values[0]
-
+        pixsizes = load_pixsizes(fd)
         for ii, img in enumerate(Imgs):
             img['cropped'] = img['raw']
             img['pixsize'] = pixsizes[ii]
@@ -430,8 +492,12 @@ def load_imgs(fd=None, n=None):
     # Otherwise, go searching for footer using dedicated function and OCR.
     else:
         try:
-            Imgs = detect_footer_scale(Imgs)
+            import pytesseract
+        except:
+            print('pytesseract not found.')
 
+        try:
+            Imgs = detect_footer_scale(Imgs)
         except:
             print('Could not get pixel size.')
             for img in Imgs:
@@ -443,13 +509,13 @@ def load_imgs(fd=None, n=None):
 
     print('Image import complete.\n')
 
-    return imgs, pixsize, fns, Imgs
+    return imgs, pixsize, fns
 
 
 def detect_footer_scale(Imgs):
     print('Looking for footers/scale:')
 
-    for img in tqdm(Imgs):
+    for img in tqdm2(Imgs):
         raw = img['raw']
         white = 255
         footer_found = False
@@ -572,7 +638,26 @@ def bbox2mask(bboxs, img_size):
     return mask
 
 
-def load_dm3(fd, n=None):
+# ---------- Utilities to load and save pixel sizes ------------ #
+def load_pixsizes(fd, file='pixsizes.csv', filenames=None):
+    df = pd.read_csv(os.path.join(fd, file), header=0)
+    if filenames is not None:
+        df = df[df['filenames'].isin([os.path.basename(path) for path in filenames])]
+    pixsizes = df['pixsizes'].values.flatten()
+    return pixsizes
+
+def write_pixsizes(fd, pixsizes, file='pixsizes.csv', filenames=None):
+    if filenames is None:
+        df = {'pixsizes': pixsizes}
+    else:
+        filenames = [os.path.basename(path) for path in filenames]
+        df = {'pixsizes': pixsizes, 'filenames': filenames}
+    df = pd.DataFrame(df)
+    df.to_csv(os.path.join(fd, file), index=False)
+# -------------------------------------------------------------- #
+
+
+def load_dm3(fd, n=None, to_scale=True):
 
     print('Loading DM3 files:')
 
@@ -587,25 +672,25 @@ def load_dm3(fd, n=None):
     imgs = [np.array([])] * len(n)
 
     # Loop through dm3 files.
-    for ii in tqdm(range(len(n))):
+    for ii in tqdm2(range(len(n))):
         try:
             dm3f = dm3.DM3(fd + "\\" + fns[n[ii]])
         except:
             pass  # skip this file
         pixsizes[ii] = dm3f.pxsize[0]
         if dm3f.pxsize[1] == 'micron':
-            pixsizes[ii] = pixsizes[ii] * 1000
+            pixsizes[ii] = np.asarray(pixsizes[ii]) * 1000
 
-        img = dm3f.imagedata
+        img = np.asarray(dm3f.Image)  # convert to numpy array
 
         # Convert to uint8 image.
         img = img - np.min(img)  # adjust minimum to start at 0
-        img = 255 * (img / np.max(img))  # scale based on max. and cover 0 > 255
+        if to_scale: img = 255 * (img / np.max(img))  # scale based on max. and cover 0 > 255
         img = img.astype(np.uint8)  # convert to integer
         
         imgs[ii] = img
 
-    textdone()
+    print('\n')
 
     return imgs, pixsizes, fns
 
@@ -698,7 +783,7 @@ def loghist(y, n=20):
     print(f'y(stats) ~ logn(mu={np.exp(mu)}, sg={np.exp(sg)})')
 
     # Use optimization to find GMD and GSD.
-    min_fun = lambda t: np.linalg.norm(stats.norm.pdf(np.log(x[0:-1]), t[0], t[1]) - dens) ** 2
+    min_fun = lambda t: np.linalg.norm(stats.norm.pdf(np.log(x[1:-1]), t[0], t[1]) - dens[1:]) ** 2
     x1 = op.fmin(min_fun, x0=[mu, sg, 1.], disp=None)
     mu = np.exp(x1[0])
     sg = np.exp(x1[1])
@@ -715,11 +800,11 @@ def loghist(y, n=20):
 
 
 def textdone():
-    print('\r' +'\033[32m' + 'DONE!' + '\033[0m' + '\n')
+    print('\r' + GREEN + 'DONE!' + RESET + '\n')
 
 
 def textblue(txt):
-    print('\r' +'\033[34m' + str(txt) + '\033[0m' + '\n')
+    print('\r' + BLUE + str(txt) + RESET + '\n')
 
 
 #== SAVING AND LOAING DATA AND IMAGES ===================#
@@ -767,17 +852,20 @@ def write_aggs(fname, Aggs):
     textdone()
 
 
-def write_images(fd, imgs, pixsizes=None, fnames=None):
+def write_images(fd, imgs, pixsizes=None, fnames=None, prefix=''):
     """
     Write images in imgs to folder.
     """
     if not os.path.exists(fd):  # create folder if necessary
         os.makedirs(fd)
 
+    if not prefix == '':
+        prefix = prefix + '_'
+
     if fnames == None:
         fnames = ['' for _ in range(len(imgs))]
         for ii in range(len(imgs)):
-            fnames[ii] = f"{fd}\\{str(ii).zfill(3)}.png"
+            fnames[ii] = f"{fd}\\{prefix}{str(ii).zfill(3)}.png"
 
     # Add scale bar. 
     if not pixsizes is None:
@@ -785,10 +873,37 @@ def write_images(fd, imgs, pixsizes=None, fnames=None):
             imgs[ii] = overlay_scale(imgs[ii], pixsizes[ii])
 
     print('Writing images:')
-    for ii in tqdm(range(len(imgs))):
+    for ii in tqdm2(range(len(imgs))):
         img = Image.fromarray(imgs[ii])
         img.save(fnames[ii])
-    textdone()
+    print('\n')
+
+def read_images(fd):
+    """
+    Reads all images from a folder, resizes/converts them, 
+    and stacks them into a single NumPy array.
+    """
+    # 1. Get all image paths (filtering for common extensions)
+    extensions = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+    path_list = [
+        p for p in PathlibPath(fd).iterdir() 
+        if p.suffix.lower() in extensions
+    ]
+    
+    # Sort paths to maintain consistency with your 'image_paths' list
+    path_list.sort()
+    
+    images = []
+    for p in path_list:
+        # Open and convert to RGB
+        # Pillow handles common formats (PNG, JPG, TIF)
+        img = Image.open(p).convert("RGB")
+        
+        # Append as NumPy array
+        images.append(np.asarray(img))
+
+    # Stack in an array.
+    return np.stack(images)[:,:,:,0]
 
 
 def write_binary(fd, imgs, imgs_binary, pixsizes=None, ext='svg', **kwargs):
@@ -805,11 +920,10 @@ def write_binary(fd, imgs, imgs_binary, pixsizes=None, ext='svg', **kwargs):
         pixsizes = list(None for _ in range(n_imgs))
 
     print('Writing figures (w/ binary mask):')
-    for ii in tqdm(range(n_imgs)):
+    for ii in tqdm2(range(n_imgs)):
         imshow_binary(imgs[ii], imgs_binary[ii], pixsize=pixsizes[ii], **kwargs)
         plt.savefig(f"{fd}\\{str(ii).zfill(3)}.{ext}", bbox_inches='tight')
         plt.clf()
-    textdone()
 
 
 def dm32img(fd, n=None, ext='png'):
@@ -820,7 +934,34 @@ def dm32img(fd, n=None, ext='png'):
     imgs, pixsizes, fns = load_dm3(fd, n)
 
     print('Writing images:')
-    for ii in tqdm(range(len(imgs))):
+    for ii in tqdm2(range(len(imgs))):
         cv2.imwrite(f'{fd}\\{fns[ii]}.{ext}', imgs[ii])
-    textdone()
 
+
+
+def iou(imgs_binary1, imgs_binary2):
+    """Compute the intersection over union (Iou)"""
+    intersections = []
+    unions = []
+    ious = []
+    for img1, img2 in zip(imgs_binary1, imgs_binary2):
+        intersections.append(np.logical_and(img1, img2).sum())
+        unions.append(np.logical_or(img1, img2).sum())
+
+        iou = intersections[-1] / unions[-1] if unions[-1] > 0 else 0
+        ious.append(iou)
+    ious = np.asarray(ious)
+
+    intersection = np.sum(np.array(intersections))
+    union = np.sum(np.array(unions))
+    iou = intersection / union if union > 0 else 0
+    
+    return iou, ious
+
+def compare_count(imgs_binary1, imgs_binary2):
+    n1, n2 = 0, 0
+    for img1, img2 in zip(imgs_binary1, imgs_binary2):
+        n1 += cv2.connectedComponents(np.ascontiguousarray(img1, dtype=np.uint8))[0]
+        n2 += cv2.connectedComponents(np.ascontiguousarray(img2, dtype=np.uint8))[0]
+    diff = n1 - n2
+    return diff, n1, n2

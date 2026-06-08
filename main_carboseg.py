@@ -8,7 +8,7 @@ import tools
 import agg, pp.pp as pp
 
 # Load images from the 'images' directory
-imgs, pixsizes, fns, _ = tools.load_imgs('images')  # OPTION 3: load all images in 'images' folder
+imgs, pixsizes, fns = tools.load_imgs('images', detect=True)  # OPTION 3: load all images in 'images' folder
 
 imgs_binary = agg.carboseg.seg_cnn(imgs, pixsizes)
 
