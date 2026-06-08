@@ -934,3 +934,31 @@ def dm32img(fd, n=None, ext='png'):
     for ii in tqdm2(range(len(imgs))):
         cv2.imwrite(f'{fd}\\{fns[ii]}.{ext}', imgs[ii])
 
+
+
+def iou(imgs_binary1, imgs_binary2):
+    """Compute the intersection over union (Iou)"""
+    intersections = []
+    unions = []
+    ious = []
+    for img1, img2 in zip(imgs_binary1, imgs_binary2):
+        intersections.append(np.logical_and(img1, img2).sum())
+        unions.append(np.logical_or(img1, img2).sum())
+
+        iou = intersections[-1] / unions[-1] if unions[-1] > 0 else 0
+        ious.append(iou)
+    ious = np.asarray(ious)
+
+    intersection = np.sum(np.array(intersections))
+    union = np.sum(np.array(unions))
+    iou = intersection / union if union > 0 else 0
+    
+    return iou, ious
+
+def compare_count(imgs_binary1, imgs_binary2):
+    n1, n2 = 0, 0
+    for img1, img2 in zip(imgs_binary1, imgs_binary2):
+        n1 += cv2.connectedComponents(np.ascontiguousarray(img1, dtype=np.uint8))[0]
+        n2 += cv2.connectedComponents(np.ascontiguousarray(img2, dtype=np.uint8))[0]
+    diff = n1 - n2
+    return diff, n1, n2
