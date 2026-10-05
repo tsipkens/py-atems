@@ -1,5 +1,5 @@
 #!/usr/bin/python
-"""Python module for parsing GATAN DM3 files"""
+"""Python module for parsing GATAN DM3 and DM4 files"""
 
 ################################################################################
 ## Python script for parsing GATAN DM3 (DigitalMicrograph) files
@@ -778,6 +778,97 @@ class DM3(object):
                 print("Thumbnail saved as '%s'." % tn_path)
         except:
             print("Warning: could not save thumbnail.")
+
+
+class DM4(object):
+    """Small DM4 adapter exposing the image and calibration used by atems.
+
+    DM4 has a different binary header and tag layout from DM3. ncempy parses
+    those details while this adapter retains the existing ``Image``/``pxsize``
+    interface expected by ``tools.load_dm3``.
+    """
+
+    def __init__(self, filename, debug=0, dataset_index=0):
+        try:
+            import numpy as np
+            from ncempy.io.dm import dmReader
+        except ImportError as exc:
+            raise ImportError("Reading DM4 files requires ncempy (pip install ncempy).") from exc
+
+        self._filename = os.fspath(filename)
+        data = dmReader(self._filename, dSetNum=dataset_index)
+        pixels = np.asarray(data["data"])
+        if pixels.ndim != 2 or np.iscomplexobj(pixels):
+            raise ValueError(
+                "Expected a real 2D DM4 image; dataset %s has shape %s and dtype %s."
+                % (dataset_index, pixels.shape, pixels.dtype)
+            )
+
+        sizes = data.get("pixelSize", [])
+        units = data.get("pixelUnit", [])
+        if len(sizes) != 2 or len(units) != 2:
+            raise ValueError("DM4 image has no usable two-axis spatial calibration.")
+        factors = {"m": 1e9, "mm": 1e6, "um": 1e3, "micron": 1e3,
+                   "nm": 1.0, "pm": 0.001, "a": 0.1, "å": 0.1,
+                   "angstrom": 0.1}
+        normalized = []
+        for unit in units:
+            if isinstance(unit, bytes):
+                unit = unit.decode("utf-8")
+            normalized.append(str(unit).strip().lower().replace("µ", "u").replace("μ", "u"))
+        if any(unit not in factors for unit in normalized):
+            raise ValueError("Unsupported DM4 spatial units: %s" % normalized)
+        scales_nm = [float(size) * factors[unit]
+                     for size, unit in zip(sizes, normalized)]
+        if not all(np.isfinite(value) and value > 0 for value in scales_nm):
+            raise ValueError("DM4 spatial calibration must be positive and finite.")
+        if not np.isclose(scales_nm[0], scales_nm[1], rtol=1e-5, atol=0):
+            raise ValueError("Non-square DM4 pixels cannot use one nm/pixel value: %s" % scales_nm)
+
+        self._image = Image.fromarray(pixels)
+        self._pxsize = (float(sizes[0]), normalized[0])
+        self._tags = data.get("allTags", {})
+        if debug:
+            print("%s: DM4 image %sx%s, pixel size %s %s"
+                  % (self._filename, self.width, self.height, *self._pxsize))
+
+    @property
+    def Image(self):
+        return self._image
+
+    @property
+    def pxsize(self):
+        return self._pxsize
+
+    @property
+    def filename(self):
+        return self._filename
+
+    @property
+    def width(self):
+        return self._image.width
+
+    @property
+    def height(self):
+        return self._image.height
+
+    @property
+    def size(self):
+        return self._image.size
+
+    @property
+    def tags(self):
+        return self._tags
+
+
+def open_dm(filename, debug=0):
+    """Open a DM3 or DM4 image with a common ``Image``/``pxsize`` interface."""
+    suffix = os.path.splitext(os.fspath(filename))[1].lower()
+    if suffix == ".dm3":
+        return DM3(filename, debug=debug)
+    if suffix == ".dm4":
+        return DM4(filename, debug=debug)
+    raise ValueError("Expected a .dm3 or .dm4 file: %s" % filename)
 
 
 ## MAIN ##
