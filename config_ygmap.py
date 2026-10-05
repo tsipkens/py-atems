@@ -5,12 +5,9 @@
   How to use this file:
   1. Set IMAGE_FOLDER in the main_*.py script you plan to run.
   2. Adjust only the settings for that script, then run it with Python:
-   - main_ygmap.py: YOLO (aggregate detector) and YGMAP (aggregate microSAM)
-   - main_ygmap_pp.py: PP_YOLO and YGMAP_PP (primary particles)
    - main_ygmap_combined.py: YOLO, YGMAP, PP_YOLO, and YGMAP_PP
-   - main_microsam.py: MICROSAM (standalone aggregate microSAM)
 
-   DEVICE controls the PyTorch microSAM models; SHOW_RESULTS controls plotting.
+  DEVICE controls the PyTorch microSAM models; SHOW_RESULTS controls plotting.
   For a checkpoint setting, None uses the default path shown below. Set a path
   to use another compatible model. The model files must exist at those paths.
   The segmentation modules define fallback defaults and validate these options;
