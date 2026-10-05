@@ -23,6 +23,71 @@ from tools import tqdm2 as tqdm
 import tools, agg
 
 
+def _filter_pp_to_aggregates(detections, aggregate_masks):
+    """Keep PP detections centered inside aggregate segmentations."""
+    if len(detections) != len(aggregate_masks):
+        raise ValueError("PP detections and aggregate masks must align by image.")
+    filtered = []
+    for detection, aggregate_mask in zip(detections, aggregate_masks):
+        mask = np.asarray(aggregate_mask, dtype=bool)
+        if mask.ndim != 2 or not all(mask.shape):
+            raise ValueError("Each aggregate mask must be a nonempty 2D image.")
+        boxes = np.asarray(detection["boxes"])
+        if boxes.size == 0:
+            boxes = boxes.reshape(0, 4)
+        if boxes.ndim != 2 or boxes.shape[1] != 4 or not np.isfinite(boxes).all():
+            raise ValueError("PP boxes must be finite (N, 4) XYXY coordinates.")
+        centers = np.floor((boxes[:, :2] + boxes[:, 2:]) / 2).astype(int)
+        x = np.clip(centers[:, 0], 0, mask.shape[1] - 1)
+        y = np.clip(centers[:, 1], 0, mask.shape[0] - 1)
+        keep = mask[y, x]
+        selected = {}
+        for key in ("boxes", "classes", "confidences", "class_names"):
+            values = detection[key]
+            if len(values) != len(boxes):
+                raise ValueError(f"PP detection field {key!r} does not align with boxes.")
+            selected[key] = ([value for value, wanted in zip(values, keep) if wanted]
+                             if key == "class_names" else np.asarray(values)[keep].copy())
+        selected["source_indices"] = np.flatnonzero(keep)
+        if "image_shape" in detection:
+            selected["image_shape"] = detection["image_shape"]
+        filtered.append(selected)
+    return filtered
+
+
+def seg_ygmap_pp(imgs, pixsizes=None, imgs_detect_pp=None, *,
+                 yolo_opts=None, checkpoint=None, device=None, opts=None,
+                 segmenter=None, aggregate_masks=None,
+                 return_particles=False, return_detections=False):
+    """YOLO-guided microSAM primary-particle segmentation.
+
+    By default, detects PP with ``det.detect_ygmap_pp``. Supply
+    ``imgs_detect_pp`` to reuse PP detections. Returns one union mask per image;
+    ``return_particles=True`` also returns individual particle records and
+    diameters. Supply ``aggregate_masks`` to segment only PP detections
+    centered inside the aggregate masks. ``return_detections=True`` appends
+    the detections actually passed to PP segmentation.
+    """
+    if imgs_detect_pp is None:
+        print(f"YGMAP-pp: loaded {len(imgs)} images. Detecting primary particles...", flush=True)
+        import det
+        imgs_detect_pp = det.detect_ygmap_pp(imgs, **(yolo_opts or {}))
+    if aggregate_masks is not None:
+        imgs_detect_pp = _filter_pp_to_aggregates(imgs_detect_pp, aggregate_masks)
+    from . import ygmap_pp
+    result = ygmap_pp.segment(
+        imgs, imgs_detect_pp, pixsizes, opts=opts, checkpoint=checkpoint,
+        device=device, segmenter=segmenter, return_particles=return_particles,
+    )
+    print("YGMAP-pp: segmentation complete.", flush=True)
+    if return_detections:
+        if return_particles:
+            imgs_binary, records = result
+            return imgs_binary, records, imgs_detect_pp
+        return result, imgs_detect_pp
+    return result
+
+
 def smooth(d, width):
     """
     Replicate MATLAB smooth function. 
