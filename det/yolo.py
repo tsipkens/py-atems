@@ -36,7 +36,7 @@ class Detector:
         self.model_group = model_group
         self.checkpoint_path = (
             Path(checkpoint_path) if checkpoint_path is not None
-            else Path(__file__).parent / "Config" / model_files[model_group]
+            else Path(__file__).parent / "config" / model_files[model_group]
         )
 
         if not 0 <= confidence <= 1 or not 0 <= iou_threshold <= 1:
