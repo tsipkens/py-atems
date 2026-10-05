@@ -18,3 +18,9 @@ dependencies:
   - scikit-learn
   - albumentations
   - onnxruntime
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cu128
+      - torch==2.11.0+cu128
+      - torchvision==0.26.0+cu128
+      - segment-anything==1.0
+      - micro-sam==1.8.12
