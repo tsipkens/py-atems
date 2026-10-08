@@ -1,5 +1,5 @@
 import os
-import dm3_lib as dm3
+import dm_lib as dm
 from PIL import ImageDraw, ImageFont
 
 def process_dm3():

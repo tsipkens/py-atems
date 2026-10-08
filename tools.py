@@ -28,7 +28,7 @@ import pickle
 import pandas as pd
 from pathlib import Path as PathlibPath
 
-import dm3_lib as dm3
+import dm_lib as dm
 
 # ANSI color codes
 GREEN = "\033[92m"
@@ -326,6 +326,8 @@ def imshow_binary2(imgs:list, imgs_binary:list, pixsizes:list=None, idx:list=Non
         plt.clf()  # clear current figure contents
         N1 = int(np.floor(np.sqrt(n_imgs)))
         N2 = int(np.ceil(n_imgs / N1))
+    else:
+        N1, N2 = 1, 1
     
     plt.figure(figsize=(12, 12*N1/N2*1.1))
     for ii in range(n_imgs):
@@ -334,6 +336,150 @@ def imshow_binary2(imgs:list, imgs_binary:list, pixsizes:list=None, idx:list=Non
             plt.title(str(idx[ii]))
         
         _ = imshow_binary(imgs[ii], imgs_binary[ii], pixsize=pixsizes[ii], **kwargs)
+
+    plt.tight_layout()
+    plt.show(block=true)
+
+
+def imshow_yolo(imgs:list, imgs_binary:list, detections:list,
+                   pixsizes:list=None, idx:list=None, **kwargs):
+    """Display binary masks together with YOLO detection results.
+    """
+
+    if len(imgs) != len(imgs_binary) or len(imgs) != len(detections):
+        raise ValueError(
+            'imgs, imgs_binary, and detections must contain the same '
+            'number of items.'
+        )
+
+    if idx is not None:
+        imgs = [imgs[ii] for ii in idx]
+        imgs_binary = [imgs_binary[ii] for ii in idx]
+        detections = [detections[ii] for ii in idx]
+        if pixsizes is not None:
+            pixsizes = [pixsizes[ii] for ii in idx]
+    else:
+        idx = np.arange(len(imgs))
+
+    if len(imgs) > 24:  # only plot up to 24 images
+        imgs = imgs[:24]
+        imgs_binary = imgs_binary[:24]
+        detections = detections[:24]
+        idx = idx[:24]
+        if pixsizes is not None:
+            pixsizes = pixsizes[:24]
+
+    n_imgs = len(imgs)
+
+    # Create None list of pixsizes, if not given, to avoid error below.
+    if pixsizes is None:
+        pixsizes = list(None for _ in range(n_imgs))
+
+    # Prepare to tile and maximize figure if more than one image.
+    if n_imgs > 1:
+        plt.clf()  # clear current figure contents
+        N1 = int(np.floor(np.sqrt(n_imgs)))
+        N2 = int(np.ceil(n_imgs / N1))
+    else:
+        N1 = 1
+        N2 = 1
+
+    colors = [
+        (1.0, 0.0, 1.0),
+        (0.0, 1.0, 0.0),
+        (0.0, 1.0, 1.0),
+        (1.0, 0.0, 0.0),
+    ]
+
+    plt.figure(figsize=(12, 12*N1/N2*1.1))
+    for ii in range(n_imgs):
+        if n_imgs > 1:
+            plt.subplot(N1, N2, ii + 1)
+            plt.title(str(idx[ii]))
+
+        _ = imshow_binary(
+            imgs[ii],
+            imgs_binary[ii],
+            pixsize=pixsizes[ii],
+            **kwargs
+        )
+
+        ax = plt.gca()
+        detection = detections[ii]
+
+        for jj, box in enumerate(detection['boxes']):
+            class_id = int(detection['classes'][jj])
+            confidence = float(detection['confidences'][jj])
+            class_name = detection['class_names'][jj]
+            color = colors[class_id % len(colors)]
+
+            x1, y1, _, _ = box.astype(float)
+            ax.text(
+                x1,
+                max(0, y1 - 5),
+                f'{class_name} {confidence:.2f}',
+                color=color,
+                fontsize=8,
+                fontweight='bold',
+                verticalalignment='bottom',
+                bbox={
+                    'facecolor': 'black',
+                    'alpha': 0.55,
+                    'edgecolor': 'none',
+                    'pad': 1.5
+                }
+            )
+
+    plt.tight_layout()
+    plt.show(block=True)
+
+def draw_microsam_particles(img, particles, alpha=0.25):
+    """RGB display copy with individual PP mask outlines, preserving overlap."""
+    if not 0 <= alpha <= 1:
+        raise ValueError('alpha must be between 0 and 1.')
+    from agg.microsam import _rgb
+
+    overlay = _rgb(img).copy()
+    colors = [(0, 220, 255), (255, 180, 0), (80, 255, 80), (160, 90, 255)]
+    for record in particles:
+        if record['status'] != 'accepted':
+            continue
+        x1, y1, x2, y2 = record['crop_box']
+        mask = record['mask']
+        roi = overlay[y1:y2, x1:x2]
+        color = colors[record['detection_index'] % len(colors)]
+        roi[mask] = ((1 - alpha) * roi[mask] + alpha * np.asarray(color)).astype(np.uint8)
+        contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(roi, contours, -1, color, 2)
+    return overlay
+
+
+def imshow_ygmap_pp(imgs, particles, pixsizes=None):
+    """Display individual YGMAP-pp particle masks on their source images."""
+    if len(imgs) != len(particles):
+        raise ValueError('imgs and particles must contain the same number of items.')
+    overlays = [
+        draw_microsam_particles(img, records)
+        for img, records in zip(imgs, particles)
+    ]
+    imshow2(overlays, pixsizes=pixsizes)
+    plt.show(block=True)
+
+def imshow_ygmap_combined(imgs, aggregate_masks, particles, pixsizes=None):
+    """Display aggregate outlines and individual PP masks on source images."""
+    if len(imgs) != len(aggregate_masks) or len(imgs) != len(particles):
+        raise ValueError('imgs, aggregate_masks, and particles must align.')
+    overlays = []
+    for img, aggregate_mask, records in zip(imgs, aggregate_masks, particles):
+        overlay = draw_microsam_particles(img, records)
+        mask = np.asarray(aggregate_mask, dtype=np.uint8)
+        if mask.shape != overlay.shape[:2]:
+            raise ValueError('Aggregate mask must match its source image.')
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(overlay, contours, -1, (255, 0, 180), 2)
+        overlays.append(overlay)
+    imshow2(overlays, pixsizes=pixsizes)
+    plt.show(block=True)
 
 
 def imshow_beside(img, img_binary, *args):
@@ -657,42 +803,72 @@ def write_pixsizes(fd, pixsizes, file='pixsizes.csv', filenames=None):
 # -------------------------------------------------------------- #
 
 
-def load_dm3(fd, n=None, to_scale=True):
+def load_dm(fd, n=None, to_scale=True):
+    """Load DM3 and DM4 images and return nm/pixel calibration for each."""
+    print('Loading DM3/DM4 files:')
+    fns = [fn for fn in os.listdir(fd)
+           if os.path.splitext(fn)[1].lower() in ('.dm3', '.dm4')]
+    indices = np.arange(len(fns)) if n is None else np.asarray(n, dtype=int)
+    selected = [fns[i] for i in indices]
+    pixsizes = np.zeros(len(selected), dtype=float)
+    imgs = []
+    factors = {'m': 1e9, 'mm': 1e6, 'um': 1e3, 'micron': 1e3,
+               'nm': 1.0, 'pm': 0.001, 'a': 0.1, 'å': 0.1,
+               'angstrom': 0.1}
 
-    print('Loading DM3 files:')
+    for ii in tqdm2(range(len(selected))):
+        filename = selected[ii]
+        image_file = dm.open_dm(os.path.join(fd, filename))
+        size, unit = image_file.pxsize
+        if isinstance(unit, bytes):
+            unit = unit.decode('utf-8')
+        unit = str(unit).strip().lower().replace('µ', 'u').replace('μ', 'u')
+        if unit not in factors:
+            raise ValueError(f'{filename}: unsupported spatial unit {unit!r}.')
+        pixsizes[ii] = float(size) * factors[unit]
 
-    fns = os.listdir(fd)
-    fns = [fn for fn in fns if os.path.splitext(fn)[1] == '.dm3']
-
-    if np.any(n == None):
-        n = np.arange(len(fns))
-
-    # Initialize variables.
-    pixsizes = np.zeros(len(n))
-    imgs = [np.array([])] * len(n)
-
-    # Loop through dm3 files.
-    for ii in tqdm2(range(len(n))):
-        try:
-            dm3f = dm3.DM3(fd + "\\" + fns[n[ii]])
-        except:
-            pass  # skip this file
-        pixsizes[ii] = dm3f.pxsize[0]
-        if dm3f.pxsize[1] == 'micron':
-            pixsizes[ii] = np.asarray(pixsizes[ii]) * 1000
-
-        img = np.asarray(dm3f.Image)  # convert to numpy array
-
-        # Convert to uint8 image.
-        img = img - np.min(img)  # adjust minimum to start at 0
-        if to_scale: img = 255 * (img / np.max(img))  # scale based on max. and cover 0 > 255
-        img = img.astype(np.uint8)  # convert to integer
-        
-        imgs[ii] = img
+        img = np.asarray(image_file.Image, dtype=np.float32)
+        if img.ndim != 2 or not np.isfinite(img).all():
+            raise ValueError(f'{filename}: expected a finite 2D image.')
+        img = img - img.min()
+        if to_scale and img.max() > 0:
+            img = 255 * img / img.max()
+        imgs.append(img.astype(np.uint8))
 
     print('\n')
+    return imgs, pixsizes, selected
 
-    return imgs, pixsizes, fns
+
+def load_dm3(fd, n=None, to_scale=True):
+    """Backward-compatible name for :func:`load_dm` (now DM3 and DM4)."""
+    return load_dm(fd, n=n, to_scale=to_scale)
+
+
+def load_microscopy_images(fd):
+    """Load raster and DM images with their available nm/pixel calibration.
+
+    Raster images use ``load_imgs`` (including pixsizes.csv when present);
+    DM3/DM4 images use the calibration stored in their metadata. This keeps
+    the entry scripts independent of file-format selection.
+    """
+    folder = PathlibPath(fd)
+    if not folder.is_dir():
+        raise FileNotFoundError(f"Image folder not found: {folder}")
+    suffixes = {path.suffix.lower() for path in folder.iterdir() if path.is_file()}
+    imgs, pixsizes, filenames = [], [], []
+    if suffixes & {'.tif', '.jpg', '.png'}:
+        raster_imgs, raster_sizes, raster_names = load_imgs(str(folder), detect=True)
+        imgs.extend(raster_imgs)
+        pixsizes.extend(raster_sizes)
+        filenames.extend(raster_names)
+    if suffixes & {'.dm3', '.dm4'}:
+        dm_imgs, dm_sizes, dm_names = load_dm(str(folder))
+        imgs.extend(dm_imgs)
+        pixsizes.extend(dm_sizes)
+        filenames.extend(str(folder / name) for name in dm_names)
+    if not imgs:
+        raise ValueError(f"No supported images found in {folder}")
+    return imgs, pixsizes, filenames
 
 
 #=========================================================================#
@@ -877,6 +1053,95 @@ def write_images(fd, imgs, pixsizes=None, fnames=None, prefix=''):
         img = Image.fromarray(imgs[ii])
         img.save(fnames[ii])
     print('\n')
+
+
+def draw_yolo_detections(img, detection, thickness=2):
+    """Draw YOLO bounding boxes, class labels, and confidences.
+
+    """
+    img = np.asarray(img)
+
+    if img.dtype != np.uint8:
+        img_float = img.astype(np.float32)
+        finite = np.isfinite(img_float)
+        if not np.any(finite):
+            raise ValueError('Image contains no finite pixel values.')
+
+        valid_pixels = img_float[finite]
+        low = np.percentile(valid_pixels, 1)
+        high = np.percentile(valid_pixels, 99)
+
+        if high > low:
+            img_float = np.clip(img_float, low, high)
+            img = (255.0 * (img_float - low) / (high - low)).astype(np.uint8)
+        else:
+            img = np.zeros(img.shape, dtype=np.uint8)
+
+    if img.ndim == 2:
+        overlay = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+    elif img.ndim == 3 and img.shape[2] == 1:
+        overlay = cv2.cvtColor(img[:, :, 0], cv2.COLOR_GRAY2RGB)
+    elif img.ndim == 3 and img.shape[2] == 3:
+        overlay = img.copy()
+    elif img.ndim == 3 and img.shape[2] == 4:
+        overlay = cv2.cvtColor(img, cv2.COLOR_RGBA2RGB)
+    else:
+        raise ValueError(f'Unsupported image shape: {img.shape}')
+
+    colors = [
+        (255, 0, 255),
+        (0, 255, 0),
+        (0, 255, 255),
+        (255, 0, 0),
+    ]
+
+    for ii, box in enumerate(detection['boxes']):
+        class_id = int(detection['classes'][ii])
+        confidence = float(detection['confidences'][ii])
+        class_name = detection['class_names'][ii]
+        color = colors[class_id % len(colors)]
+        x1, y1, x2, y2 = box.astype(int)
+
+        cv2.rectangle(overlay, (x1, y1), (x2, y2), color, thickness)
+        cv2.putText(
+            overlay,
+            f'{class_name} {confidence:.2f}',
+            (x1, max(20, y1 - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            color,
+            thickness,
+            cv2.LINE_AA
+        )
+
+    return overlay
+
+
+def write_yolo_detections(fd, imgs, detections, fnames=None):
+    """Write YOLO detection overlays to a folder.
+
+    This keeps visualization and file output separate from model inference,
+    consistent with the other py-atems writing utilities.
+    """
+    output_folder = PathlibPath(fd)
+    output_folder.mkdir(parents=True, exist_ok=True)
+
+    if len(imgs) != len(detections):
+        raise ValueError('imgs and detections must contain the same number of items.')
+
+    if fnames is not None and len(fnames) != len(imgs):
+        raise ValueError('fnames and imgs must contain the same number of items.')
+
+    print('Writing YOLO detection images:')
+    for ii in tqdm2(range(len(imgs))):
+        overlay = draw_yolo_detections(imgs[ii], detections[ii])
+        if fnames is None:
+            filename = f'{str(ii).zfill(3)}_yolo.png'
+        else:
+            filename = PathlibPath(fnames[ii]).stem + '_yolo.png'
+        Image.fromarray(overlay).save(output_folder / filename)
+
+    print(f'YOLO images saved to: {output_folder.resolve()}\n')
 
 def read_images(fd):
     """

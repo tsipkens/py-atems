@@ -457,6 +457,40 @@ def seg_sam2(imgs, pixsizes=None, *args):
     return imgs_binary
 
 
+def seg_microsam(imgs, pixsizes=None, **kwargs):
+    """Standalone aggregate MicroSAM segmentation.
+
+    Returns one boolean mask per image. Model options such as ``checkpoint``,
+    ``device``, ``opts`` and ``return_instances`` go to ``agg.microsam``.
+    """
+    from . import microsam
+    return microsam.segment_standalone(imgs, pixsizes, **kwargs)
+
+
+def seg_ygmap(imgs, pixsizes=None, imgs_detect=None, *,
+              yolo_opts=None, return_detections=False, **kwargs):
+    """Detect aggregates with ``det`` and segment them with guided MicroSAM.
+
+    Supply ``imgs_detect`` to reuse a previous ``det.detect_yolo(imgs)`` call.
+    Returns one boolean mask per image. ``return_instances=True`` also returns
+    per-aggregate records; ``return_detections=True`` appends YOLO detections.
+    """
+    if not isinstance(imgs, (list, tuple)):
+        raise TypeError("imgs must be a list of images, e.g. [image].")
+    if imgs_detect is None:
+        import det
+        imgs_detect = det.detect_ygmap_seg(imgs, **(yolo_opts or {}))
+
+    from . import microsam
+    result = microsam.segment_ygmap(imgs, imgs_detect, pixsizes, **kwargs)
+    if return_detections:
+        if kwargs.get("return_instances", False):
+            imgs_binary, records = result
+            return imgs_binary, records, imgs_detect
+        return result, imgs_detect
+    return result
+
+
 def seg_carboseg(imgs, pixsizes=None, opts=None):
     """
     Wrapper for creating instance of class of the carboseg Classifier and running.
