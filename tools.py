@@ -99,167 +99,159 @@ def load_config(fn):
     return opts
 
 
-def imshow(img, pixsize=None, cmap=None):
-    """
-    A modified version of imshow that formats images for this program.
-    Timothy Sipkens, 2020-08-25
-    
-    Parameters:
-    img (ndarray): The image to be displayed.
-    cmap (str or Colormap, optional): The colormap to be applied. Defaults to grayscale.
-    pixsize (float, optional): The pixel size for overlaying a scale bar. If not provided, no scale bar is added.
-    
-    Returns:
-    h (AxesImage): The image handle.
-    """
+# ==========================================
+# HELPER UTILITIES FOR PLOTTING
+# ==========================================
 
-    if cmap is None:
-        cmap = 'gray'
+def _to_list(val, min_ndim=1):
+    """Ensure val is wrapped in a list if it falls below min_ndim."""
+    if val is None:
+        return None
+    if isinstance(val, (list, tuple)):
+        return list(val)
+    if isinstance(val, slice):
+        return val  # preserve slice object for index evaluation
+    return [val] if np.ndim(val) < min_ndim else list(val)
 
-    if pixsize is not None:
-        img = overlay_scale(img, pixsize)
+def check_imshow_inputs(imgs, imgs_binary=None, pixsizes=None, idx=None, max_imgs=24):
+    """Parse inputs to imshow methods, supporting integer lists, arrays, and slices."""
+    # 1. Normalize image collections to lists
+    imgs = _to_list(imgs, min_ndim=3)
+    imgs_binary = _to_list(imgs_binary, min_ndim=3)
+    pixsizes = _to_list(pixsizes, min_ndim=1)
 
-    h = plt.imshow(img, cmap=cmap)  # Show image with colormap
-    plt.axis('image')  # Adjust the axis to proper dimensions
-    plt.xticks([])  # Remove x-ticks
-    plt.yticks([])  # Remove y-ticks
-
-    return h
-
-
-def imshow2(imgs:list, n=None, pixsizes=None, **kwargs):
-    """
-    A wrapper for displaying multiple images using matplotlib.
-
-    Parameters:
-    imgs : list of arrays
-        List of images to display. Must be a list (not a structure).
-    cmap : str or None, optional
-        Colormap to use for displaying the images.
-    n : list of int or None, optional
-        Indices of images to plot. If not specified, all images are considered.
-    pixsizes : list or None, optional
-        List of pixel sizes for each image.
-
-    Returns:
-    h : matplotlib Axes object
-        The current Axes instance.
-    f : matplotlib Figure object
-        The current Figure instance.
-    """
-
-    # Parse inputs
-    if not isinstance(imgs, list):
-        imgs = [imgs]
-
-    # Incorporate indices of images to plot, if specified
-    if n is None:
-        n = list(range(len(imgs)))
-    imgs = [imgs[ii] for ii in n]
-
-    # Limit plotting to first 24 images
-    if len(imgs) > 24:
-        imgs = imgs[:24]
-
-    n_imgs = len(imgs)  # number of images after above processing
-
-    # Create None list of pixsizes, if not given, to avoid error below.
-    if pixsizes is None:
-        pixsizes = list(None for _ in range(n_imgs))
-
-    # If more than one image, prepare to tile and maximize figure
-    if n_imgs > 1:
-        plt.clf()  # clear current figure contents
-        N1 = int(np.floor(np.sqrt(n_imgs)))
-        N2 = int(np.ceil(n_imgs / N1))
+    # 2. Resolve index selection (supporting slices, lists, tuples, or None)
+    total_imgs = len(imgs)
+    if idx is None:
+        resolved_idx = list(range(total_imgs))
+    elif isinstance(idx, slice):
+        # Convert slice object into a explicit list of valid indices
+        resolved_idx = list(range(total_imgs)[idx])
     else:
-        N1, N2 = 1, 1
+        resolved_idx = _to_list(idx, min_ndim=1)
 
-    for ii in range(n_imgs):  # loop over images
-        if n_imgs > 1:
-            plt.subplot(N1, N2, ii + 1)
-            plt.title(str(n[ii]))
-        imshow(imgs[ii], pixsize=pixsizes[ii], **kwargs)
+    # 3. Truncate to maximum allowed images
+    resolved_idx = resolved_idx[:max_imgs]
+
+    # 4. Slice inputs according to resolved indices
+    imgs = [imgs[i] for i in resolved_idx]
+    imgs_binary = [imgs_binary[i] for i in resolved_idx] if imgs_binary is not None else None
+    pixsizes = [pixsizes[i] for i in resolved_idx] if pixsizes is not None else None
+
+    return imgs, imgs_binary, pixsizes, resolved_idx, len(imgs)
+
+def _prepare_grid(n_imgs, panel_size=3.5):
+    """Determine balanced subplot grid rows/cols and dynamically set figure size."""
+    if n_imgs <= 1:
+        n_rows, n_cols = 1, 1
+    else:
+        n_rows = int(np.floor(np.sqrt(n_imgs)))
+        n_cols = int(np.ceil(n_imgs / n_rows))
+
+    fig, axes = plt.subplots(
+        n_rows, n_cols, 
+        figsize=(n_cols * panel_size, n_rows * panel_size)
+    )
+    
+    # Flatten axes array for unified 1D indexing
+    axes = np.atleast_1d(axes).flatten()
+    
+    # Hide unused extra subplot axes if n_imgs doesn't fill grid perfectly
+    for ax in axes[n_imgs:]:
+        ax.axis('off')
+
+    return fig, axes, n_rows, n_cols
 
 
+# ==========================================
+# SCALE BAR OVERLAY
+# ==========================================
 def overlay_scale(img, pixsize, frac=0.3):
+    """Overlay a scale bar on the image according to pixel size."""
+    img = img.copy()
 
-    img = img.copy()  # don't overwrite
+    # Calculate bar length in pixels and rounded real units (nm/um)
+    bar_length0 = int(np.floor(img.shape[1] * frac))
+    bar_length1 = round(pixsize * bar_length0)
 
-    # Calculate bar length in pixels and nm
-    bar_length0 = int(np.floor(img.shape[1] * frac))  # in pixels, based on fraction (`frac`) of image size 
-    bar_length1 = round(pixsize * bar_length0)  # in nm, rounded for string operation below
-
-    # Round up bar length if necessary
-    s1 = str(bar_length1)  # convert to string for manipulation
-    b1 = int(s1[0])  # first digit
-    if b1 > 5:  # do some rounding (closest 1, 2, or 5 up)
+    # Round up bar length to clean digits (closest 1, 2, or 5)
+    s1 = str(bar_length1)
+    b1 = int(s1[0])
+    if b1 > 5:
         s1 = '0' + s1
         b1 = 1
     elif b1 > 2:
         b1 = 5
 
-    l1 = len(s1)  # length of number
-    bar_length = b1 * 10 ** (l1 - 1)  # use only first digit (rounded above) and order-of-magnitude
-    bar_length_px = int(bar_length / pixsize)  # in pixels
+    bar_length = b1 * 10 ** (len(s1) - 1)
+    bar_length_px = int(bar_length / pixsize)
 
-    # Properties for scale bar
-    margin = np.floor(np.array(img.shape[0:2]) * 0.05).astype(int)  # margin away from edge of the image
-    bar_height = margin[1] // 5  # height of the bar
-    start_y, end_x = img.shape[0] - margin[1], img.shape[1] - margin[0]  # start positions for bar
+    # Scale bar geometry parameters
+    margin = np.floor(np.array(img.shape[0:2]) * 0.05).astype(int)
+    bar_height = max(1, margin[1] // 5)
+    start_y, end_x = img.shape[0] - margin[1], img.shape[1] - margin[0]
 
-    # Draw scale bar.
-    if img.ndim == 3:  # first, assign black color
-        color = [0, 0, 0]
-    else:
-        color = 0
-    img[start_y - bar_height:start_y, end_x - bar_length_px:end_x] = color  # bar
+    # Handle color matching based on image channels
+    color = [0, 0, 0] if img.ndim == 3 else 0
+    img[start_y - bar_height:start_y, end_x - bar_length_px:end_x] = color
 
-    # Add text label
+    # Draw label text via OpenCV
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = img.shape[0] / 650  # scale font and thickness as fraction of image size
+    font_scale = img.shape[0] / 650
     thickness = max(1, int(font_scale * 2.5))
-    if bar_length >= 1e3:  # then use microns
-        cv2.putText(img, f'{int(bar_length / 1e3)} um', (end_x - bar_length_px, int(start_y - 2.5 * bar_height)), 
-                    font, font_scale, color, thickness, cv2.LINE_AA)
-    else:
-        cv2.putText(img, f'{bar_length} nm', (end_x - bar_length_px, int(start_y - 2.5 * bar_height)), 
-                    font, font_scale, color, thickness, cv2.LINE_AA)
+    text_str = f'{int(bar_length / 1e3)} um' if bar_length >= 1e3 else f'{bar_length} nm'
+
+    cv2.putText(
+        img, text_str, 
+        (end_x - bar_length_px, int(start_y - 2.5 * bar_height)), 
+        font, font_scale, color, thickness, cv2.LINE_AA
+    )
 
     return img
 
 
-def imshow_binary(img, img_binary, pixsize=None, alpha=0.2, outline=True, colors=[(1, 0, 0.5)], image_alpha=0.7):
-    # Parse inputs
-    if isinstance(img, list):
-        img = img[0]
-    if isinstance(img_binary, list):
-        img_binary = img_binary[0]
+# ==========================================
+# SINGLE PANEL PLOTTING FUNCTIONS
+# ==========================================
+def imshow0(img, pixsize=None, cmap='gray', ax=None):
+    """Format and render a single standard image."""
+    if ax is None:
+        ax = plt.gca()
 
     if pixsize is not None:
         img = overlay_scale(img, pixsize)
 
-    # Display the image
-    plt.imshow(img, cmap='gray')
-    
-    # Get labels for plotting.
-    labels = label(img_binary)
+    h = ax.imshow(img, cmap=cmap)
+    ax.axis('image')
+    ax.set_xticks([])
+    ax.set_yticks([])
+    return h
+
+
+def imshow_binary0(img, img_binary, pixsize=None, alpha=0.2, colors=[(1, 0, 0.5)], ax=None):
+    """Format and render a single image overlaid with binary mask contours."""
+    if ax is None:
+        ax = plt.gca()
+
+    if isinstance(img, list): img = img[0]
+    if isinstance(img_binary, list): img_binary = img_binary[0]
+
+    if pixsize is not None:
+        img = overlay_scale(img, pixsize)
+
+    ax.imshow(img, cmap='gray')
+    ax.axis('image')
+    ax.set_xticks([])
+    ax.set_yticks([])
+
     mask = img_binary
-    image = Image.fromarray(img)
-
-    if np.any(mask):  # check if mask to plot (if no particles, would error)
-
+    if np.any(mask):
         _, num_objects = label(mask, return_num=True)
         if num_objects > 50:
-            plt.axis('off')
-            return  # too many to plot, so meaningless, exit function
+            return  # Skip mask plotting if contours exceed manageable count
 
-        # Step 1: Find all contours
         contours = find_contours(mask, level=0.5)
-            
-        # Step 2: Separate outer and inner contours
-        outer_contours = []
-        hole_contours = []
+        outer_contours, hole_contours = [], []
 
         for contour in contours:
             y, x = np.mean(contour, axis=0)
@@ -268,79 +260,90 @@ def imshow_binary(img, img_binary, pixsize=None, alpha=0.2, outline=True, colors
             else:
                 hole_contours.append(contour)
 
-        # Step 3: Create a compound polygon using matplotlib Path
         def contour_to_path(contour, code_type):
             verts = [(x, y) for y, x in contour]
             codes = [Path.MOVETO] + [code_type] * (len(verts) - 1)
             return verts, codes
 
-        vertices = []
-        codes = []
+        vertices, codes = [], []
 
-        # Add outer boundary
         for outer in outer_contours:
             verts, cs = contour_to_path(outer, Path.LINETO)
-            vertices.extend(verts + [verts[0]])  # close path
+            vertices.extend(verts + [verts[0]])
             codes.extend(cs + [Path.CLOSEPOLY])
 
-        # Add holes
         for hole in hole_contours:
             verts, cs = contour_to_path(hole, Path.LINETO)
             vertices.extend(verts + [verts[0]])
             codes.extend(cs + [Path.CLOSEPOLY])
 
-        # Create final compound path
-        compound_path = Path(vertices, codes)
-        patch = PathPatch(compound_path, 
-                        facecolor=to_rgba(colors[0], alpha=alpha), 
-                        edgecolor=colors[0], lw=0.5)
+        if vertices:
+            compound_path = Path(vertices, codes)
+            patch = PathPatch(
+                compound_path, 
+                facecolor=to_rgba(colors[0], alpha=alpha), 
+                edgecolor=colors[0], lw=0.5
+            )
+            ax.add_patch(patch)
 
-        plt.gca().add_patch(patch)
 
-    plt.axis('off')
+# ==========================================
+# PUBLIC WRAPPER FUNCTIONS & COMPATIBILITY
+# ==========================================
+def imshow(imgs, imgs_binary=None, idx=None, pixsizes=None, panel_size=3.5, show=True, **kwargs):
+    """Display one or multiple images with uniform figure formatting."""
+    # Legacy parameter support: check if second arg was passed as `idx`
+    if imgs_binary is not None:
+        if np.ndim(imgs_binary) < 2:
+            idx = imgs_binary
+            imgs_binary = None
+        else:
+            imshow_binary(imgs, imgs_binary, pixsizes=pixsizes, idx=idx, panel_size=panel_size, **kwargs)
+            return
 
+    imgs, _, pixsizes, idx, n_imgs = check_imshow_inputs(imgs, None, pixsizes, idx)
+    pixsizes = pixsizes or [None] * n_imgs
 
-def imshow_binary2(imgs:list, imgs_binary:list, pixsizes:list=None, idx:list=None, **kwargs):
-    
-    if not idx is None:
-        imgs = [imgs[ii] for ii in idx]
-        imgs_binary = [imgs_binary[ii] for ii in idx]
-        if not pixsizes == None:
-            pixsizes = [pixsizes[ii] for ii in idx]
+    fig, axes, _, _ = _prepare_grid(n_imgs, panel_size=panel_size)
 
-    else:
-        idx = np.arange(len(imgs))
-
-    if len(imgs) > 24:  # only plot up to 24 images
-        imgs = imgs[:24]
-        imgs_binary = imgs_binary[:24]
-
-    n_imgs = len(imgs)  # number of images
-
-    # Create None list of pixsizes, if not given, to avoid error below.
-    if pixsizes is None:
-        pixsizes = list(None for _ in range(n_imgs))
-
-    # Prepare to tile and maximize figure if more than one image
-    if n_imgs > 1:
-        plt.clf()  # clear current figure contents
-        N1 = int(np.floor(np.sqrt(n_imgs)))
-        N2 = int(np.ceil(n_imgs / N1))
-    else:
-        N1, N2 = 1, 1
-    
-    plt.figure(figsize=(12, 12*N1/N2*1.1))
-    for ii in range(n_imgs):
+    for i in range(n_imgs):
         if n_imgs > 1:
-            plt.subplot(N1, N2, ii + 1)
-            plt.title(str(idx[ii]))
-        
-        _ = imshow_binary(imgs[ii], imgs_binary[ii], pixsize=pixsizes[ii], **kwargs)
+            axes[i].set_title(str(idx[i]))
+        imshow0(imgs[i], pixsize=pixsizes[i], ax=axes[i], **kwargs)
 
     plt.tight_layout()
-    plt.show(block=true)
+    if show: plt.show()
+    return fig, axes
 
 
+def imshow_binary(imgs, imgs_binary, pixsizes=None, idx=None, panel_size=3.5, show=True, **kwargs):
+    """Display images with binary mask overlays using unified sizing."""
+    imgs, imgs_binary, pixsizes, idx, n_imgs = check_imshow_inputs(imgs, imgs_binary, pixsizes, idx)
+    pixsizes = pixsizes or [None] * n_imgs
+
+    fig, axes, _, _ = _prepare_grid(n_imgs, panel_size=panel_size)
+
+    for i in range(n_imgs):
+        if n_imgs > 1:
+            axes[i].set_title(str(idx[i]))
+        imshow_binary0(imgs[i], imgs_binary[i], pixsize=pixsizes[i], ax=axes[i], **kwargs)
+
+    plt.tight_layout()
+    if show: plt.show()
+    return fig, axes
+
+
+# Legacy aliases retained for backward compatibility
+def imshow2(*args, **kwargs):
+    return imshow(*args, **kwargs)
+
+def imshow_binary2(*args, **kwargs):
+    return imshow_binary(*args, **kwargs)
+
+
+#=========================================================================#
+#== ADDED SHOW METHODS FOR SAMY ==========================================#
+#=========================================================================#
 def imshow_yolo(imgs:list, imgs_binary:list, detections:list,
                    pixsizes:list=None, idx:list=None, **kwargs):
     """Display binary masks together with YOLO detection results.
@@ -480,6 +483,8 @@ def imshow_ygmap_combined(imgs, aggregate_masks, particles, pixsizes=None):
         overlays.append(overlay)
     imshow2(overlays, pixsizes=pixsizes)
     plt.show(block=True)
+#=========================================================================#
+#=========================================================================#
 
 
 def imshow_beside(img, img_binary, *args):
@@ -488,7 +493,7 @@ def imshow_beside(img, img_binary, *args):
     
     # Plot without overlay.
     plt.subplot(1, 2, 1)
-    imshow(img)
+    imshow0(img)
 
     # Plot with binary overlay.
     plt.subplot(1, 2, 2)
@@ -536,7 +541,7 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None,
             pixsize = Aggs.iloc[img_idx[0]]['pixsize'] if f_scale else None
 
             # Display the image with binary overlay
-            imshow_binary(imgs[idx[ii]], img_binary, pixsize=pixsize, colors=[color], **kwargs)
+            imshow_binary(imgs=imgs[idx[ii]], imgs_binary=img_binary, pixsizes=pixsize, colors=[color], show=False, **kwargs)
             plt.title(str(idx[ii]))
         
         for agg_idx in img_idx:
