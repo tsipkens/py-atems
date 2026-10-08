@@ -679,7 +679,7 @@ def analyze_binary(imgs_binary, pixsize, imgs, fname=None, remove_edge_aggs=Fals
             agg_jj['first_pixel'] = np.argwhere(mask)[0]
 
             row, col = np.where(mask)
-            agg_jj['center_mass'] = [np.mean(row), np.mean(col)]
+            agg_jj['centroid'] = [np.mean(row), np.mean(col)]
 
             agg_jj['length'] = max(np.ptp(row), np.ptp(col)) * pixsize[ii]
             agg_jj['width'] = min(np.ptp(row), np.ptp(col)) * pixsize[ii]
@@ -930,7 +930,7 @@ def imshow(Aggs, imgs, imgs_binary, idx=0, padding=50, dp_type=''):
     Rg = Aggs['Rg'][idx] / Aggs['pixsize'][idx]
     ra = Aggs['da'][idx] / 2 / Aggs['pixsize'][idx]
     rect = Aggs['rect'][idx]
-    center = (Aggs['center_mass'][idx][1] - rect[0] + padding, Aggs['center_mass'][idx][0] - rect[1] + padding)
+    center = (Aggs['centroid'][idx][1] - rect[0] + padding, Aggs['centroid'][idx][0] - rect[1] + padding)
 
     # Generate points.
     theta = np.linspace(0, 2 * np.pi, 100)
@@ -967,7 +967,7 @@ def match(Aggs1, Aggs2, tol=20):
         if len(agg2) == 0:
             continue
         
-        d = np.linalg.norm(np.stack(agg2['center_mass'].to_numpy()) - np.array(agg1['center_mass']), axis=1)
+        d = np.linalg.norm(np.stack(agg2['centroid'].to_numpy()) - np.array(agg1['centroid']), axis=1)
         j = np.argmin(d)
 
         if d[j] < tol:  # based on center-of-mass distance

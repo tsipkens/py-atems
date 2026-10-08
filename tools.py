@@ -298,7 +298,7 @@ def imshow(imgs, imgs_binary=None, idx=None, pixsizes=None, panel_size=3.5, show
             idx = imgs_binary
             imgs_binary = None
         else:
-            imshow_binary(imgs, imgs_binary, pixsizes=pixsizes, idx=idx, panel_size=panel_size, **kwargs)
+            imshow_binary(imgs, imgs_binary, pixsizes=pixsizes, idx=idx, panel_size=panel_size, show=show, **kwargs)
             return
 
     imgs, _, pixsizes, idx, n_imgs = check_imshow_inputs(imgs, None, pixsizes, idx)
@@ -548,17 +548,17 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None,
             agg = Aggs.loc[agg_idx]
 
             # Plot an 'x' at the CoM. 
-            plt.plot(agg['center_mass'][1], agg['center_mass'][0], 'xk', linewidth=0.75)
+            plt.plot(agg['centroid'][1], agg['centroid'][0], 'xk', linewidth=0.75)
 
             # Plot ID of the aggregate at CoM. 
             if f_text:
-                plt.text(agg['center_mass'][1] + 20, agg['center_mass'][0], str(agg['id']), color='black', size='small')
+                plt.text(agg['centroid'][1] + 20, agg['centroid'][0], str(agg['id']), color='black', size='small')
             
             # Plot Rg and da.
             if f_diam:
-                plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), agg['Rg'] / agg['pixsize'], 
+                plt.gca().add_patch(Circle((agg['centroid'][1], agg['centroid'][0]), agg['Rg'] / agg['pixsize'], 
                                            color=color, fill=False, linewidth=0.5))
-                plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), agg['da'] / 2 / agg['pixsize'], 
+                plt.gca().add_patch(Circle((agg['centroid'][1], agg['centroid'][0]), agg['da'] / 2 / agg['pixsize'], 
                                            color=np.array(color) * 0.25, fill=False, linewidth=0.5))
                 
             if f_encl:
@@ -568,7 +568,7 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None,
             
             # Plot primary particle diameter if present. 
             if f_dp and hasattr(agg, 'dp') and not np.isnan(agg.dp):
-                plt.gca().add_patch(Circle((agg['center_mass'][1], agg['center_mass'][0]), 
+                plt.gca().add_patch(Circle((agg['centroid'][1], agg['centroid'][0]), 
                                            agg['dp'] / 2 / agg['pixsize'], color=[0.92, 0.16, 0.49], fill=False, linewidth=0.5))
 
 
