@@ -541,7 +541,7 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None,
             pixsize = Aggs.iloc[img_idx[0]]['pixsize'] if f_scale else None
 
             # Display the image with binary overlay
-            imshow_binary(imgs=imgs[idx[ii]], imgs_binary=img_binary, pixsizes=pixsize, colors=[color], show=False, **kwargs)
+            imshow_binary0(img=imgs[idx[ii]], img_binary=img_binary, pixsize=pixsize, colors=[color], **kwargs)
             plt.title(str(idx[ii]))
         
         for agg_idx in img_idx:
@@ -572,7 +572,7 @@ def imshow_agg(Aggs, imgs, imgs_binary, idx=None,
                                            agg['dp'] / 2 / agg['pixsize'], color=[0.92, 0.16, 0.49], fill=False, linewidth=0.5))
 
 
-# Also, see agg.imshow(), which shows a cropped version of the aggregate.
+# NOTE: Also, see agg.imshow(), which shows a cropped version of the aggregate.
 
 
 
