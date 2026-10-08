@@ -182,3 +182,4 @@ cython_debug/
 agg/config/FPN-resnet50-imagenet.onnx
 resnet50_simplified.onnx
 agg/config/FPN-resnet50-imagenet-cuda.onnx
+FPN-resnet50-imagenet.onnx
