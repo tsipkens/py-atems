@@ -18,22 +18,6 @@ importlib.reload(tools)
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
-
-def gyration(img_binary, pixsize):
-    """Computes the radius of gyration (Rg) of a binary mask."""
-    total_area = np.count_nonzero(img_binary)
-    if total_area == 0:
-        return np.nan, np.array([]), np.array([])
-
-    xpos, ypos = np.where(img_binary)
-    cx = np.mean(xpos)
-    cy = np.mean(ypos)
-
-    Ar2 = (xpos - cx) ** 2 + (ypos - cy) ** 2
-    Rg = np.sqrt(np.sum(Ar2) / total_area) * pixsize
-    return Rg, xpos, ypos
-
-
 def get_perimeter2(img_binary):
     """Computes perimeter by midpoint-connecting contour line segments."""
     contours = measure.find_contours(img_binary, 0.5)
@@ -55,7 +39,6 @@ def get_perimeter2(img_binary):
 
     p_circ = np.sum(np.sqrt((xx_mb - np.roll(xx_mb, -1)) ** 2 + (yy_mb - np.roll(yy_mb, -1)) ** 2))
     return float(p_circ)
-
 
 def box_counting(img_binary):
     """Estimates the fractal dimension (Df) of a binary mask using box counting."""
@@ -175,6 +158,10 @@ class Aggs:
         """Supports direct bracket indexing, e.g., aggs['da']."""
         return self.df[item]
 
+    def __len__(self):
+        """Returns the number of detected aggregate objects in the dataset."""
+        return len(self.df)
+
     def _extract_objects(self):
         """Extracts connected component aggregates and builds the dataset."""
         all_records = []
@@ -216,25 +203,28 @@ class Aggs:
                 intensity_image=orig_img,
                 properties=("label", "centroid", "bbox", "eccentricity", 
                             "solidity", "area", "equivalent_diameter", 
-                            "moments_central", "perimeter"),
+                            "moments_central", "perimeter", 
+                            "feret_diameter_max", "major_axis_length", "minor_axis_length"),
             )
 
             for jj in range(1, naggs + 1):
-                mask = (labeled_img == jj)
-                if not np.any(mask):
+                idx_prop = jj - 1
+                min_r = int(props_table["bbox-0"][idx_prop])
+                min_c = props_table["bbox-1"][idx_prop]
+                max_r = props_table["bbox-2"][idx_prop]
+                max_c = props_table["bbox-3"][idx_prop]
+                bbox = (min_r, min_c, max_r, max_c)
+
+                # Localized slice extraction (avoids full-image memory boolean allocations)
+                cropped_mask = labeled_img[min_r:max_r, min_c:max_c] == jj
+                if not np.any(cropped_mask):
                     continue
 
-                idx_prop = jj - 1
                 centroid = (
                     props_table["centroid-0"][idx_prop],
                     props_table["centroid-1"][idx_prop],
                 )
-                bbox = (
-                    props_table["bbox-0"][idx_prop],
-                    props_table["bbox-1"][idx_prop],
-                    props_table["bbox-2"][idx_prop],
-                    props_table["bbox-3"][idx_prop],
-                )
+                
                 eccentricity = props_table["eccentricity"][idx_prop]
                 solidity = props_table["solidity"][idx_prop]
                 area = int(props_table["area"][idx_prop])
@@ -242,22 +232,22 @@ class Aggs:
                 da = props_table["equivalent_diameter"][idx_prop] * pixsize
                 perimeter_p = props_table["perimeter"][idx_prop] * pixsize
 
-                min_r, min_c, max_r, max_c = bbox
-                cropped_mask = mask[min_r:max_r, min_c:max_c]
+                feret_diameter_max = props_table["feret_diameter_max"][idx_prop] * pixsize
+                major_axis_length = props_table["major_axis_length"][idx_prop] * pixsize
+                minor_axis_length = props_table["minor_axis_length"][idx_prop] * pixsize
 
-                row, col = np.where(cropped_mask)
+                # Fast first-pixel seed point extraction
+                first_pixel = np.argwhere(cropped_mask)[0]
+                seed_local = (int(first_pixel[0]), int(first_pixel[1]))
 
-                # Local coordinate relative to cropped bounding box top-left
-                seed_local = (int(row[0]), int(col[0]))
+                height = float((max_r - min_r) * pixsize)
+                width = float((max_c - min_c) * pixsize)
+                aspect_ratio = major_axis_length / minor_axis_length
 
-                ptp_r = int(np.ptp(row)) if len(row) > 1 else 1
-                ptp_c = int(np.ptp(col)) if len(col) > 1 else 1
-                height = (props_table["bbox-2"][idx_prop] - props_table["bbox-0"][idx_prop]) * pixsize
-                width = (props_table["bbox-3"][idx_prop] - props_table["bbox-1"][idx_prop]) * pixsize
-                aspect_ratio = float(height / width) if width > 0 else np.nan
-
-                Rg = np.sqrt((props_table["moments_central-2-0"][idx_prop] + \
-                              props_table["moments_central-0-2"][idx_prop]) / area) * pixsize
+                # Radius of gyration from central moments
+                mu20 = props_table["moments_central-2-0"][idx_prop]
+                mu02 = props_table["moments_central-0-2"][idx_prop]
+                Rg = np.sqrt((mu20 + mu02) / area) * pixsize
 
                 contours = measure.find_contours(cropped_mask.astype(float), level=0.5)
                 if len(contours) > 0:
@@ -279,20 +269,20 @@ class Aggs:
                     encl_r = float(np.max(np.linalg.norm(hull_points - encl_c, axis=1)))
                 else:
                     encl_c_full = centroid
-                    encl_r = float(max(ptp_r, ptp_c) / 2.0)
+                    encl_r = max(max_r - min_r, max_c - min_c) / 2.0
 
-                encl_d = float(2 * encl_r * pixsize)
-                sphericity = float(da / encl_d) if encl_d > 0 else np.nan
+                encl_d = 2 * encl_r * pixsize
+                sphericity = (da / encl_d) if encl_d > 0 else np.nan
 
                 dilated_mask = ndimage.binary_dilation(cropped_mask)
                 border_pixels = np.logical_and(dilated_mask, np.logical_not(cropped_mask))
                 perimeter1 = np.sum(border_pixels)
 
                 perimeter3 = get_perimeter2(cropped_mask)
-                perimeter = float(pixsize * max(perimeter1, perimeter3))
+                perimeter = pixsize * max(perimeter1, perimeter3)
 
                 circularity = (
-                    float((4 * np.pi * area_scaled) / (perimeter ** 2))
+                    (4 * np.pi * area_scaled) / (perimeter ** 2)
                     if perimeter > 0
                     else np.nan
                 )
@@ -308,6 +298,9 @@ class Aggs:
                     "area_scaled": area_scaled,
                     "height": height,
                     "width": width,
+                    "feret_diameter_max": feret_diameter_max,
+                    "major_axis_length": major_axis_length,
+                    "minor_axis_length": minor_axis_length,
                     "aspect_ratio": aspect_ratio,
                     "eccentricity": eccentricity,
                     "solidity": solidity,

@@ -21,6 +21,7 @@ from tools import tqdm2 as tqdm
 
 # Import custom modules.
 import tools, agg
+import agg.Aggs
 
 
 def _filter_pp_to_aggregates(detections, aggregate_masks):
@@ -146,7 +147,11 @@ def pcm(Aggs, imgs_binary, f_plot=False, f_backup=False, opts=None):
         agg_aa = Aggs.loc[aa].copy()
 
         pixsize = agg_aa['pixsize']
-        img_binary = agg.get_binary(imgs_binary, Aggs, idx=aa)  # crop the binarized image
+
+        if isinstance(Aggs, agg.Aggs.Aggs):  # crop the binarized image
+            img_binary = Aggs.get_binary(idx=aa)
+        else:
+            img_binary = agg.get_binary(imgs_binary, Aggs, idx=aa)
 
         # Avoids error 
         img_binary = remove_small_holes(img_binary, area_threshold=100)
@@ -300,7 +305,11 @@ def edm_sbs(Aggs, imgs_binary, pixsizes=None):
     print('Performing EDM-SBS loop:')
     for aa in tqdm(range(len(Aggs))):
 
-        img_binary = agg.get_binary(imgs_binary, Aggs, idx=aa)  # crop the binarized image
+        if isinstance(Aggs, agg.Aggs.Aggs):  # crop the binarized image
+            img_binary = Aggs.get_binary(idx=aa)
+        else:
+            img_binary = agg.get_binary(imgs_binary, Aggs, idx=aa)
+            
         pixsize = pixsizes[aa]
 
         #== STEP 1: Morphological opening of the binary image ================%
