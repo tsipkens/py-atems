@@ -20,7 +20,7 @@ class Classifier:
     A class used to implement the neural network associated with carboseg.
     """
     def __init__(self):
-        self.checkpoint_path = Path(__file__).parent / "config\\FPN-resnet50-imagenet.onnx"
+        self.checkpoint_path = Path(__file__).parent / "models\\FPN-resnet50-imagenet.onnx"
 
         self.onnx_session = ort.InferenceSession(str(self.checkpoint_path))
         self.input_name = self.onnx_session.get_inputs()[0].name

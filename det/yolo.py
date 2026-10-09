@@ -6,6 +6,7 @@ AUTHOR: Ethan Xiong, 2026
 
 import ast
 from pathlib import Path
+import os
 
 import cv2
 import numpy as np
@@ -13,6 +14,8 @@ import onnxruntime as ort
 
 from tools import tqdm2 as tqdm
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+MODEL_DIR = os.getenv("MODEL_DIR", BASE_DIR / "models")
 
 class Detector:
     def __init__(
@@ -22,21 +25,17 @@ class Detector:
         checkpoint_path=None,
         model_group="aggregate",
     ):
-        """
-        Load the YOLO ONNX model.
-
-        """
-
+        # Load the YOLO ONNX model.
         model_files = {
-            "aggregate": "detectV5.onnx",
-            "pp": "ppdetectV1.onnx",
+            "aggregate": "YOLO-seg\\ONNX\\detectV7.onnx",
+            "pp": "YOLO-pp\\ONNX\\ppdetectV1.onnx",
         }
         if model_group not in model_files:
             raise ValueError("model_group must be 'aggregate' or 'pp'.")
         self.model_group = model_group
         self.checkpoint_path = (
             Path(checkpoint_path) if checkpoint_path is not None
-            else Path(__file__).parent / "config" / model_files[model_group]
+            else MODEL_DIR / model_files[model_group]
         )
 
         if not 0 <= confidence <= 1 or not 0 <= iou_threshold <= 1:
@@ -76,7 +75,7 @@ class Detector:
             self._get_input_size()
         )
 
-        print(f"Loaded YOLO model: {self.checkpoint_path}")
+        print(f"Loaded YOLO model: {self.checkpoint_path.name}")
 
     def _load_class_names(self):
         """Read the class names preserved in the model."""

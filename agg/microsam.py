@@ -15,9 +15,11 @@ import cv2
 import numpy as np
 
 __all__ = ["MicroSAM", "StandaloneMicroSAM", "segment_standalone", "segment_ygmap"]
-DEFAULT_CHECKPOINT = Path(__file__).parent / "config" / "MSAM_512_V2.pt"
-STANDALONE_CHECKPOINT = Path(__file__).parent / "config" / "microsam_standalone.pt"
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+MODEL_DIR = os.getenv("MODEL_DIR", BASE_DIR / "models")
+DEFAULT_CHECKPOINT = MODEL_DIR / "MicroSAM-seg\\PyTorch" / "MSAM_512_V2.safe.pt"
+STANDALONE_CHECKPOINT = MODEL_DIR / "MicroSAM-seg\\PyTorch" / "microsam_standalone.pt"  # NOTE: currently not included
 
 @dataclass(frozen=True)
 class GuidedOptions:
