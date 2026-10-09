@@ -436,13 +436,17 @@ def imshow_yolo(imgs:list, imgs_binary:list, detections:list,
     plt.tight_layout()
     plt.show(block=True)
 
-def draw_microsam_particles(img, particles, alpha=0.25):
+
+def draw_microsam_particles(img, particles=None, alpha=0.25):
     """RGB display copy with individual PP mask outlines, preserving overlap."""
     if not 0 <= alpha <= 1:
         raise ValueError('alpha must be between 0 and 1.')
     from agg.microsam import _rgb
 
     overlay = _rgb(img).copy()
+    if not particles:
+        return overlay
+
     colors = [(0, 220, 255), (255, 180, 0), (80, 255, 80), (160, 90, 255)]
     for record in particles:
         if record['status'] != 'accepted':
@@ -456,24 +460,32 @@ def draw_microsam_particles(img, particles, alpha=0.25):
         cv2.drawContours(roi, contours, -1, color, 2)
     return overlay
 
-
-def imshow_usamy_pp(imgs, particles, pixsizes=None):
+def imshow_usamy_pp(imgs, particles=None, pixsizes=None):
     """Display individual usamy-pp particle masks on their source images."""
-    if len(imgs) != len(particles):
+    if particles is not None and len(imgs) != len(particles):
         raise ValueError('imgs and particles must contain the same number of items.')
+    
+    # Use empty list for each image if particles is None
+    particles_list = particles if particles is not None else [None] * len(imgs)
+    
     overlays = [
         draw_microsam_particles(img, records)
-        for img, records in zip(imgs, particles)
+        for img, records in zip(imgs, particles_list)
     ]
     imshow2(overlays, pixsizes=pixsizes)
     plt.show(block=True)
 
 def imshow_usamy_combined(imgs, aggregate_masks, particles=None, pixsizes=None):
     """Display aggregate outlines and individual PP masks on source images."""
-    if len(imgs) != len(aggregate_masks) or len(imgs) != len(particles):
-        raise ValueError('imgs, aggregate_masks, and particles must align.')
+    if len(imgs) != len(aggregate_masks):
+        raise ValueError('imgs and aggregate_masks must contain the same number of items.')
+    if particles is not None and len(imgs) != len(particles):
+        raise ValueError('imgs and particles must contain the same number of items.')
+
+    particles_list = particles if particles is not None else [None] * len(imgs)
     overlays = []
-    for img, aggregate_mask, records in zip(imgs, aggregate_masks, particles):
+    
+    for img, aggregate_mask, records in zip(imgs, aggregate_masks, particles_list):
         overlay = draw_microsam_particles(img, records)
         mask = np.asarray(aggregate_mask, dtype=np.uint8)
         if mask.shape != overlay.shape[:2]:
@@ -481,6 +493,7 @@ def imshow_usamy_combined(imgs, aggregate_masks, particles=None, pixsizes=None):
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         cv2.drawContours(overlay, contours, -1, (255, 0, 180), 2)
         overlays.append(overlay)
+        
     imshow2(overlays, pixsizes=pixsizes)
     plt.show(block=True)
 #=========================================================================#
