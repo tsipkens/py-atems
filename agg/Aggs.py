@@ -214,7 +214,9 @@ class Aggs:
             props_table = regionprops_table(
                 labeled_img,
                 intensity_image=orig_img,
-                properties=("label", "centroid", "bbox", "eccentricity", "solidity", "area", "moments_central", "perimeter"),
+                properties=("label", "centroid", "bbox", "eccentricity", 
+                            "solidity", "area", "equivalent_diameter", 
+                            "moments_central", "perimeter"),
             )
 
             for jj in range(1, naggs + 1):
@@ -237,7 +239,8 @@ class Aggs:
                 solidity = props_table["solidity"][idx_prop]
                 area = int(props_table["area"][idx_prop])
                 area_scaled = area * (pixsize ** 2)
-                perimeter_prop = props_table["perimeter"][idx_prop] * (pixsize ** 2) * pixsize
+                da = props_table["equivalent_diameter"][idx_prop] * pixsize
+                perimeter_p = props_table["perimeter"][idx_prop] * pixsize
 
                 min_r, min_c, max_r, max_c = bbox
                 cropped_mask = mask[min_r:max_r, min_c:max_c]
@@ -252,8 +255,6 @@ class Aggs:
                 height = (props_table["bbox-2"][idx_prop] - props_table["bbox-0"][idx_prop]) * pixsize
                 width = (props_table["bbox-3"][idx_prop] - props_table["bbox-1"][idx_prop]) * pixsize
                 aspect_ratio = float(height / width) if width > 0 else np.nan
-
-                da = float(2 * np.sqrt(area_scaled / np.pi))
 
                 Rg = np.sqrt((props_table["moments_central-2-0"][idx_prop] + \
                               props_table["moments_central-0-2"][idx_prop]) / area) * pixsize
@@ -319,7 +320,7 @@ class Aggs:
                     "encl_d": encl_d,
                     "sphericity": sphericity,
                     "perimeter": perimeter,
-                    "perimeter_prop": perimeter_prop,
+                    "perimeter_p": perimeter_p,
                     "circularity": circularity,
                     "Df": Df,
                     "seed_local": seed_local,
