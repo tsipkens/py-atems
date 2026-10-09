@@ -4,7 +4,7 @@ Detection wrappers for py-atems.
 AUTHOR: Ethan Xiong
 """
 
-__all__ = ["detect_yolo", "detect_ygmap_seg", "detect_ygmap_pp"]
+__all__ = ["detect_yolo", "detect_usamy_seg", "detect_usamy_pp"]
 
 def _detect(imgs, model_group, confidence, iou_threshold, checkpoint_path):
     from .yolo import Detector
@@ -25,14 +25,14 @@ def detect_yolo(imgs, *, confidence=0.20, iou_threshold=0.70,
     return _detect(imgs, "aggregate", confidence, iou_threshold, checkpoint_path)
 
 
-def detect_ygmap_seg(imgs, *, confidence=0.20, iou_threshold=0.70,
+def detect_usamy_seg(imgs, *, confidence=0.20, iou_threshold=0.70,
                      checkpoint_path=None):
-    """Aggregate YOLO detections for YGMAP-seg; same detector as detect_yolo."""
+    """Aggregate YOLO detections for usamy-seg; same detector as detect_yolo."""
     return detect_yolo(imgs, confidence=confidence, iou_threshold=iou_threshold,
                        checkpoint_path=checkpoint_path)
 
 
-def detect_ygmap_pp(imgs, *, confidence=0.10, iou_threshold=0.70,
+def detect_usamy_pp(imgs, *, confidence=0.10, iou_threshold=0.70,
                     checkpoint_path=None):
-    """Primary-particle YOLO boxes for YGMAP-pp."""
+    """Primary-particle YOLO boxes for usamy-pp."""
     return _detect(imgs, "pp", confidence, iou_threshold, checkpoint_path)

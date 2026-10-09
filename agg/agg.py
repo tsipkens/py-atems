@@ -39,6 +39,7 @@ from sklearn.cluster import KMeans
 
 # Import custom modules.
 import tools
+import det
 
 
 # To access a field, e.g.: [d['da'] for d in Aggs] OR:
@@ -467,9 +468,10 @@ def seg_microsam(imgs, pixsizes=None, **kwargs):
     return microsam.segment_standalone(imgs, pixsizes, **kwargs)
 
 
-def seg_ygmap(imgs, pixsizes=None, imgs_detect=None, *,
+def seg_usamy(imgs, pixsizes=None, imgs_detect=None, *,
               yolo_opts=None, return_detections=False, **kwargs):
-    """Detect aggregates with ``det`` and segment them with guided MicroSAM.
+    """
+    Detect aggregates with ``det`` and segment them with guided MicroSAM.
 
     Supply ``imgs_detect`` to reuse a previous ``det.detect_yolo(imgs)`` call.
     Returns one boolean mask per image. ``return_instances=True`` also returns
@@ -478,11 +480,10 @@ def seg_ygmap(imgs, pixsizes=None, imgs_detect=None, *,
     if not isinstance(imgs, (list, tuple)):
         raise TypeError("imgs must be a list of images, e.g. [image].")
     if imgs_detect is None:
-        import det
-        imgs_detect = det.detect_ygmap_seg(imgs, **(yolo_opts or {}))
+        imgs_detect = det.detect_usamy_seg(imgs, **(yolo_opts or {}))
 
     from . import microsam
-    result = microsam.segment_ygmap(imgs, imgs_detect, pixsizes, **kwargs)
+    result = microsam.segment_usamy(imgs, imgs_detect, pixsizes, **kwargs)
     if return_detections:
         if kwargs.get("return_instances", False):
             imgs_binary, records = result

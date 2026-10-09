@@ -56,13 +56,13 @@ def _filter_pp_to_aggregates(detections, aggregate_masks):
     return filtered
 
 
-def seg_ygmap_pp(imgs, pixsizes=None, imgs_detect_pp=None, *,
+def seg_usamy(imgs, pixsizes=None, imgs_detect_pp=None, *,
                  yolo_opts=None, checkpoint=None, device=None, opts=None,
                  segmenter=None, aggregate_masks=None,
                  return_particles=False, return_detections=False):
     """YOLO-guided microSAM primary-particle segmentation.
 
-    By default, detects PP with ``det.detect_ygmap_pp``. Supply
+    By default, detects PP with ``det.detect_usamy_pp``. Supply
     ``imgs_detect_pp`` to reuse PP detections. Returns one union mask per image;
     ``return_particles=True`` also returns individual particle records and
     diameters. Supply ``aggregate_masks`` to segment only PP detections
@@ -70,17 +70,17 @@ def seg_ygmap_pp(imgs, pixsizes=None, imgs_detect_pp=None, *,
     the detections actually passed to PP segmentation.
     """
     if imgs_detect_pp is None:
-        print(f"YGMAP-pp: loaded {len(imgs)} images. Detecting primary particles...", flush=True)
+        print(f"uSAMY-pp: loaded {len(imgs)} images. Detecting primary particles...", flush=True)
         import det
-        imgs_detect_pp = det.detect_ygmap_pp(imgs, **(yolo_opts or {}))
+        imgs_detect_pp = det.detect_usamy_pp(imgs, **(yolo_opts or {}))
     if aggregate_masks is not None:
         imgs_detect_pp = _filter_pp_to_aggregates(imgs_detect_pp, aggregate_masks)
-    from . import ygmap_pp
-    result = ygmap_pp.segment(
+    from . import usamy_pp
+    result = usamy_pp.segment(
         imgs, imgs_detect_pp, pixsizes, opts=opts, checkpoint=checkpoint,
         device=device, segmenter=segmenter, return_particles=return_particles,
     )
-    print("YGMAP-pp: segmentation complete.", flush=True)
+    print("uSAMY-pp: segmentation complete.", flush=True)
     if return_detections:
         if return_particles:
             imgs_binary, records = result

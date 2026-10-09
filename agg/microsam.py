@@ -1,7 +1,6 @@
-"""Standalone and YOLO-guided aggregate MicroSAM segmentation.
-
+"""
+Standalone and YOLO-guided aggregate MicroSAM segmentation.
 AUTHOR: Ethan Xiong
-
 """
 from __future__ import annotations
 
@@ -10,12 +9,12 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+import tools.tqdm2 as tqdm
 
 import cv2
 import numpy as np
 
-__all__ = ["MicroSAM", "StandaloneMicroSAM", "segment_standalone", "segment_ygmap"]
-
+__all__ = ["MicroSAM", "StandaloneMicroSAM", "segment_standalone", "segment_usamy"]
 BASE_DIR = Path(__file__).resolve().parent.parent
 MODEL_DIR = os.getenv("MODEL_DIR", BASE_DIR / "models")
 DEFAULT_CHECKPOINT = MODEL_DIR / "MicroSAM-seg\\PyTorch" / "MSAM_512_V2.safe.pt"
@@ -25,7 +24,7 @@ STANDALONE_CHECKPOINT = MODEL_DIR / "MicroSAM-seg\\PyTorch" / "microsam_standalo
 class GuidedOptions:
     # Aggregate settings, with configurable overlap and box-size guards.
     # Fallback defaults for direct calls to the segmentation function.
-    # For normal YGMAP runs, change settings in config_ygmap.py instead.
+    # For normal usamy runs, change settings in config_usamy.py instead.
     window_size: int = 640
     large_box_fraction: float = 0.80
     large_roi_padding: float = 0.50
@@ -133,10 +132,9 @@ def _rgb(image):
 
 
 class MicroSAM:
-    """Reusable fine-tuned SAM model, loaded once and shared across calls.
-    
     """
-
+    Reusable fine-tuned SAM model, loaded once and shared across calls.
+    """
     def __init__(self, checkpoint=None, model_type="vit_b", device=None):
         checkpoint = Path(checkpoint) if checkpoint is not None else DEFAULT_CHECKPOINT
         if not checkpoint.is_file():
@@ -146,13 +144,14 @@ class MicroSAM:
             from segment_anything import SamPredictor, sam_model_registry
         except ImportError as exc:
             raise ImportError(
-                "MicroSAM requires torch, torchvision and segment-anything. "
-                "See MICROSAM.md in the package root."
+                "MicroSAM requires torch, torchvision and segment-anything."
             ) from exc
+        
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         state = torch.load(str(checkpoint), map_location="cpu", weights_only=True)
         if not isinstance(state, dict):
             raise ValueError("Expected a SAM weights dictionary.")
+        
         state = state.get("model_state", state.get("state_dict", state))
         state = {key.removeprefix("sam."): value for key, value in state.items()}
         if model_type not in sam_model_registry:
@@ -306,10 +305,10 @@ def _detections(detection, shape):
     return boxes, scores, classes, name_map
 
 
-def segment_ygmap(imgs, imgs_detect, pixsizes=None, *, checkpoint=None,
+def segment_usamy(imgs, imgs_detect, pixsizes=None, *, checkpoint=None,
                       model_type="vit_b", device=None, opts=None,
                       segmenter=None, return_instances=False):
-    """YGMAP-seg: use existing YOLO detections as box prompts for MicroSAM.
+    """usamy-seg: use existing YOLO detections as box prompts for MicroSAM.
 
     imgs_detect is the list returned by det.detect_yolo(imgs). Returns a list
     of same-size boolean masks. With return_instances=True, returns
@@ -325,7 +324,7 @@ def segment_ygmap(imgs, imgs_detect, pixsizes=None, *, checkpoint=None,
         raise ValueError("imgs_detect must have one detection dictionary per image.")
     opts = _options(GuidedOptions, opts)
     binaries, records = [], []
-    for image, detection in zip(imgs, imgs_detect):
+    for image, detection in tqdm(zip(imgs, imgs_detect)):
         rgb = _rgb(image)
         shape = rgb.shape[:2]
         boxes, scores, classes, names = _detections(detection, shape)
