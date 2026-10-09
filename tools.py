@@ -36,6 +36,9 @@ BLUE = "\033[96m"
 GRAY = "\033[30m"  # alt. 90m
 RESET = "\033[0m"
 
+DEFAULT_COLORS = [(255, 0, 128)]
+
+
 # custom_format = f"{{percentage:3.0f}}%|{GREEN}{{bar:25}}{RESET}| {{n_fmt}}/{{total_fmt}} [{{elapsed}}<{{remaining}}]"
 # def tqdm2(*args, **kwargs):
 #     return tqdm(*args, **kwargs, ascii=' ▌█', bar_format=custom_format)
@@ -227,8 +230,36 @@ def imshow0(img, pixsize=None, cmap='gray', ax=None):
     ax.set_yticks([])
     return h
 
+def _rgb(image):
+    """Preserve uint8 intensities; use the reference percentile scaling otherwise."""
+    image = np.asarray(image)
+    if image.ndim == 3 and image.shape[2] == 1:
+        image = image[:, :, 0]
+    if image.ndim not in (2, 3) or (image.ndim == 3 and image.shape[2] not in (3, 4)):
+        raise ValueError(f"Expected grayscale, RGB or RGBA image, got {image.shape}.")
+    if not image.size:
+        raise ValueError("Image must not be empty.")
+    if image.dtype != np.uint8:
+        values = image.astype(np.float32)
+        finite = np.isfinite(values)
+        if not finite.any():
+            raise ValueError("Image contains no finite values.")
+        low, high = np.percentile(values[finite], [1, 99])
+        if high <= low:
+            low, high = values[finite].min(), values[finite].max()
+        if high > low:
+            values = 255 * (np.clip(values, low, high) - low) / (high - low)
+            values[~finite] = 0
+            image = np.rint(values).astype(np.uint8)
+        else:
+            image = np.zeros(image.shape, dtype=np.uint8)
+    if image.ndim == 2:
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+    elif image.shape[2] == 4:
+        image = image[:, :, :3]
+    return np.ascontiguousarray(image)
 
-def imshow_binary0(img, img_binary, pixsize=None, alpha=0.2, colors=[(1, 0, 0.5)], ax=None):
+def imshow_binary0(img, img_binary, pixsize=None, alpha=0.1, colors=[(1, 0, 0.5)], ax=None, fast=True):
     """Format and render a single image overlaid with binary mask contours."""
     if ax is None:
         ax = plt.gca()
@@ -239,52 +270,74 @@ def imshow_binary0(img, img_binary, pixsize=None, alpha=0.2, colors=[(1, 0, 0.5)
     if pixsize is not None:
         img = overlay_scale(img, pixsize)
 
-    ax.imshow(img, cmap='gray')
-    ax.axis('image')
-    ax.set_xticks([])
-    ax.set_yticks([])
-
     mask = img_binary
     if np.any(mask):
-        _, num_objects = label(mask, return_num=True)
-        if num_objects > 50:
-            return  # Skip mask plotting if contours exceed manageable count
+        if fast:
+            if mask is not None:
+                img_local = _rgb(img).copy()
+                mask8 = np.asarray(mask, dtype=np.uint8)
+                if mask8.shape != img_local.shape[:2]:
+                    raise ValueError('Aggregate mask must match its source image.')
 
-        contours = find_contours(mask, level=0.5)
-        outer_contours, hole_contours = [], []
+                # Shade over the mask region.
+                color = np.array(DEFAULT_COLORS[0], dtype=np.uint8)
+                mask_bool = mask8 > 0
+                img_local[mask_bool] = ((1 - alpha) * img_local[mask_bool] + alpha * color).astype(np.uint8)
 
-        for contour in contours:
-            y, x = np.mean(contour, axis=0)
-            if mask[int(y), int(x)] == 1:
-                outer_contours.append(contour)
-            else:
-                hole_contours.append(contour)
+                # Draw border.
+                contours, _ = cv2.findContours(mask8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                cv2.drawContours(img_local, contours, -1, DEFAULT_COLORS[0], 2)
 
-        def contour_to_path(contour, code_type):
-            verts = [(x, y) for y, x in contour]
-            codes = [Path.MOVETO] + [code_type] * (len(verts) - 1)
-            return verts, codes
+            ax.imshow(img_local)
+            ax.axis('image')
+            ax.set_xticks([])
+            ax.set_yticks([])
 
-        vertices, codes = [], []
+        else:
+            ax.imshow(img, cmap='gray')
+            ax.axis('image')
+            ax.set_xticks([])
+            ax.set_yticks([])
 
-        for outer in outer_contours:
-            verts, cs = contour_to_path(outer, Path.LINETO)
-            vertices.extend(verts + [verts[0]])
-            codes.extend(cs + [Path.CLOSEPOLY])
+            _, num_objects = label(mask, return_num=True)
+            if num_objects > 50:
+                return  # Skip mask plotting if contours exceed manageable count
 
-        for hole in hole_contours:
-            verts, cs = contour_to_path(hole, Path.LINETO)
-            vertices.extend(verts + [verts[0]])
-            codes.extend(cs + [Path.CLOSEPOLY])
+            contours = find_contours(mask, level=0.5)
+            outer_contours, hole_contours = [], []
 
-        if vertices:
-            compound_path = Path(vertices, codes)
-            patch = PathPatch(
-                compound_path, 
-                facecolor=to_rgba(colors[0], alpha=alpha), 
-                edgecolor=colors[0], lw=0.5
-            )
-            ax.add_patch(patch)
+            for contour in contours:
+                y, x = np.mean(contour, axis=0)
+                if mask[int(y), int(x)] == 1:
+                    outer_contours.append(contour)
+                else:
+                    hole_contours.append(contour)
+
+            def contour_to_path(contour, code_type):
+                verts = [(x, y) for y, x in contour]
+                codes = [Path.MOVETO] + [code_type] * (len(verts) - 1)
+                return verts, codes
+
+            vertices, codes = [], []
+
+            for outer in outer_contours:
+                verts, cs = contour_to_path(outer, Path.LINETO)
+                vertices.extend(verts + [verts[0]])
+                codes.extend(cs + [Path.CLOSEPOLY])
+
+            for hole in hole_contours:
+                verts, cs = contour_to_path(hole, Path.LINETO)
+                vertices.extend(verts + [verts[0]])
+                codes.extend(cs + [Path.CLOSEPOLY])
+
+            if vertices:
+                compound_path = Path(vertices, codes)
+                patch = PathPatch(
+                    compound_path, 
+                    facecolor=to_rgba(colors[0], alpha=alpha), 
+                    edgecolor=colors[0], lw=0.5
+                )
+                ax.add_patch(patch)
 
 
 # ==========================================
@@ -441,7 +494,6 @@ def draw_microsam_particles(img, particles=None, alpha=0.25):
     """RGB display copy with individual PP mask outlines, preserving overlap."""
     if not 0 <= alpha <= 1:
         raise ValueError('alpha must be between 0 and 1.')
-    from agg.microsam import _rgb
 
     overlay = _rgb(img).copy()
     if not particles:
@@ -460,42 +512,50 @@ def draw_microsam_particles(img, particles=None, alpha=0.25):
         cv2.drawContours(roi, contours, -1, color, 2)
     return overlay
 
-def imshow_usamy_pp(imgs, particles=None, pixsizes=None):
+def imshow_usamy_pp(imgs, particles=None, pixsizes=None, show=True):
     """Display individual usamy-pp particle masks on their source images."""
     if particles is not None and len(imgs) != len(particles):
         raise ValueError('imgs and particles must contain the same number of items.')
     
-    # Use empty list for each image if particles is None
     particles_list = particles if particles is not None else [None] * len(imgs)
     
     overlays = [
         draw_microsam_particles(img, records)
         for img, records in zip(imgs, particles_list)
     ]
-    imshow2(overlays, pixsizes=pixsizes)
-    plt.show(block=True)
+    imshow2(overlays, pixsizes=pixsizes, show=show)
+    if show: plt.show(block=True)
 
-def imshow_usamy_combined(imgs, aggregate_masks, particles=None, pixsizes=None):
-    """Display aggregate outlines and individual PP masks on source images."""
-    if len(imgs) != len(aggregate_masks):
+def imshow_usamy_combined(imgs, aggregate_masks=None, particles=None, pixsizes=None, show=True):
+    """
+    Display aggregate outlines and individual PP masks on source images.
+    If both aggregate_masks and particles are None, simply displays the source images.
+    """
+    if aggregate_masks is not None and len(imgs) != len(aggregate_masks):
         raise ValueError('imgs and aggregate_masks must contain the same number of items.')
     if particles is not None and len(imgs) != len(particles):
         raise ValueError('imgs and particles must contain the same number of items.')
 
+    masks_list = aggregate_masks if aggregate_masks is not None else [None] * len(imgs)
     particles_list = particles if particles is not None else [None] * len(imgs)
-    overlays = []
     
-    for img, aggregate_mask, records in zip(imgs, aggregate_masks, particles_list):
+    overlays = []
+    print('Plotting images:')
+    for img, aggregate_mask, records in tqdm2(zip(imgs, masks_list, particles_list), total=len(imgs)):
         overlay = draw_microsam_particles(img, records)
-        mask = np.asarray(aggregate_mask, dtype=np.uint8)
-        if mask.shape != overlay.shape[:2]:
-            raise ValueError('Aggregate mask must match its source image.')
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        cv2.drawContours(overlay, contours, -1, (255, 0, 180), 2)
-        overlays.append(overlay)
         
-    imshow2(overlays, pixsizes=pixsizes)
-    plt.show(block=True)
+        if aggregate_mask is not None:
+            mask = np.asarray(aggregate_mask, dtype=np.uint8)
+            if mask.shape != overlay.shape[:2]:
+                raise ValueError('Aggregate mask must match its source image.')
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            cv2.drawContours(overlay, contours, -1, DEFAULT_COLORS[0], 2)
+            
+        overlays.append(overlay)
+    textdone()
+
+    imshow2(overlays, pixsizes=pixsizes, show=False)
+    if show: plt.show(block=True)
 #=========================================================================#
 #=========================================================================#
 
