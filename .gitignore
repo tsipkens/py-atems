@@ -9,6 +9,7 @@ tmp.py
 docs/CODE_figs.pptx
 *.xyz
 archive/
+*.pkl
 
 # Ignore heavy model files
 models/*

@@ -457,8 +457,8 @@ def draw_microsam_particles(img, particles, alpha=0.25):
     return overlay
 
 
-def imshow_ygmap_pp(imgs, particles, pixsizes=None):
-    """Display individual YGMAP-pp particle masks on their source images."""
+def imshow_usamy_pp(imgs, particles, pixsizes=None):
+    """Display individual usamy-pp particle masks on their source images."""
     if len(imgs) != len(particles):
         raise ValueError('imgs and particles must contain the same number of items.')
     overlays = [
@@ -468,7 +468,7 @@ def imshow_ygmap_pp(imgs, particles, pixsizes=None):
     imshow2(overlays, pixsizes=pixsizes)
     plt.show(block=True)
 
-def imshow_ygmap_combined(imgs, aggregate_masks, particles, pixsizes=None):
+def imshow_usamy_combined(imgs, aggregate_masks, particles=None, pixsizes=None):
     """Display aggregate outlines and individual PP masks on source images."""
     if len(imgs) != len(aggregate_masks) or len(imgs) != len(particles):
         raise ValueError('imgs, aggregate_masks, and particles must align.')
@@ -1008,12 +1008,18 @@ def load_data(fname):
     Load data files using pickle.
     Outputs the same number of variables as was originally saved.
     """
-    print('Loading data ...')
+    print('Loading data...')
     with open(fname, "rb") as file:
-        out = pickle.load(file)
-    print(f'Loaded {str(len(out))} variables.')
+        data = pickle.load(file)
+    print(f'Loaded {str(len(data))} variables:')
+
+    variables = '('
+    for key in data.keys():
+        variables = variables + key + ', '
+    print(variables[0:-2] + ')')
     textdone()
-    return out
+
+    return tuple(data.values())
 
 
 def write_aggs(fname, Aggs):

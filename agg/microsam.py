@@ -9,10 +9,12 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-import tools.tqdm2 as tqdm
+from tools import tqdm2 as tqdm
 
 import cv2
 import numpy as np
+
+import warnings
 
 __all__ = ["MicroSAM", "StandaloneMicroSAM", "segment_standalone", "segment_usamy"]
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -148,7 +150,7 @@ class MicroSAM:
             ) from exc
         
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        state = torch.load(str(checkpoint), map_location="cpu", weights_only=True)
+        state = torch.load(str(checkpoint), map_location="cpu", weights_only=False)
         if not isinstance(state, dict):
             raise ValueError("Expected a SAM weights dictionary.")
         
@@ -248,6 +250,7 @@ def _segment_aggregate(segmenter, image_rgb, box, opts):
     prompt_area = max(1.0, box_area(prompt))
     px1, py1, px2, py2 = np.rint(prompt).astype(int)
     best_mask, best_quality, best_score = None, -np.inf, np.nan
+
     for mask, score in zip(candidates, scores):
         area = int(mask.sum())
         if not area or not np.isfinite(score):
@@ -260,6 +263,7 @@ def _segment_aggregate(segmenter, image_rgb, box, opts):
         quality = float(score) - 0.75 * fraction - 0.05 * ratio
         if quality > best_quality:
             best_mask, best_quality, best_score = mask, quality, float(score)
+
     full = np.zeros((height, width), dtype=bool)
     if best_mask is None:
         return full, best_score, mode, "no_valid_candidate"
@@ -324,7 +328,9 @@ def segment_usamy(imgs, imgs_detect, pixsizes=None, *, checkpoint=None,
         raise ValueError("imgs_detect must have one detection dictionary per image.")
     opts = _options(GuidedOptions, opts)
     binaries, records = [], []
-    for image, detection in tqdm(zip(imgs, imgs_detect)):
+
+    print('Processing with uSAM:')
+    for image, detection in tqdm(zip(imgs, imgs_detect), total=len(imgs)):
         rgb = _rgb(image)
         shape = rgb.shape[:2]
         boxes, scores, classes, names = _detections(detection, shape)
@@ -352,6 +358,8 @@ def segment_usamy(imgs, imgs_detect, pixsizes=None, *, checkpoint=None,
                 })
         binaries.append(binary)
         records.append(image_records)
+    print("DONE.\n")
+
     return (binaries, records) if return_instances else binaries
 
 

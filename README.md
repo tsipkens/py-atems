@@ -32,7 +32,7 @@ The following analysis methods were adapted for inclusion here or have accompany
 
 **edm_sbs**. This code also contain an adaptation of the EDM-SBS method of [Bescond et al. (2014)][bescond]. We thank the authors, in particular Jérôme Yon, for their help in understanding their original [Scilab code and ImageJ plugin](https://www.coria.fr/en/edm-sbs-automated-analysis-of-tem-images/). Modifications to allow the method to work directly on binary images (rather than a custom output from ImageJ) and to integrate the method into the MATLAB environment may present some minor compatibility issues, but allows use of the aggregate segmentation methods given in the **agg** package.
 
-**carboseg**. This method is a CNN-based segmentation method associated with [Sipkens et al. (2021)][ptech.cnn]. The corresponding ONNX file is available **[here](https://github.com/maxfrei750/CarbonBlackSegmentation/releases/download/v1.0/FPN-resnet50-imagenet.onnx)**. See the [CarbonBlackSegmentation](https://github.com/maxfrei750/CarbonBlackSegmentation) repository for information on training.
+**carboseg**. This method is a CNN-based segmentation method associated with [Sipkens et al. (2021)][ptech.cnn]. The corresponding ONNX file is available **[here](https://github.com/maxfrei750/CarbonBlackSegmentation/releases/download/v1.0/FPN-resnet50-imagenet.onnx)**. The file is to be placed in the models folder. See the [CarbonBlackSegmentation](https://github.com/maxfrei750/CarbonBlackSegmentation) repository for information on training.
 
 ### How to cite
 
