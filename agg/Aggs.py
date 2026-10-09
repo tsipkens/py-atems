@@ -11,9 +11,7 @@ from skimage.measure import regionprops_table
 from skimage.segmentation import clear_border, flood
 
 import tools
-import importlib
-importlib.reload(tools)
-
+from tools import tqdm2 as tqdm
 
 # =============================================================================
 # HELPER FUNCTIONS
@@ -168,9 +166,9 @@ class Aggs:
         global_id = 0
 
         print('Processing images to extract aggregates:')
-        for img_idx, (bin_img, orig_img, pixsize, fname) in enumerate(tools.tqdm2(
+        for img_idx, (bin_img, orig_img, pixsize, fname) in enumerate(tqdm(
             zip(self.imgs_binary, self.imgs, self.pixsizes, self.fnames),
-            total=len(self.imgs)  # <-- Add this line inside your tqdm2 call
+            total=len(self.imgs)
         )):
             img_binary = bin_img.copy()
 
@@ -451,6 +449,7 @@ class Aggs:
 
         return masks[0] if is_single else masks
 
+
     @staticmethod
     def _to_list(idx):
         """Resolve target indices from scalar, list, or slice"""
@@ -461,6 +460,7 @@ class Aggs:
         else:
             target_indices = list(idx)
         return target_indices
+
 
     def imshow(self, idx=None, 
                f_img=True, f_show=False, f_scale=False, f_text=True, f_diam=True, f_dp=True, f_encl=False,
@@ -485,7 +485,7 @@ class Aggs:
             plt.subplot(N1, N2, 1)
 
         print('Collecting images for plotting:')
-        for ii in tools.tqdm2(range(n_img)):
+        for ii in tqdm(range(n_img)):
             if n_img > 1 and not f_show:
                 plt.subplot(N1, N2, ii + 1)
 
