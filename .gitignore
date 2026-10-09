@@ -10,6 +10,10 @@ docs/CODE_figs.pptx
 *.xyz
 archive/
 
+# Ignore heavy model files
+models/*
+!models/.gitkeep
+
 # Ignore local copy of SAM2
 sam2/
 checkpoints/
