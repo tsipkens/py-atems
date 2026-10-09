@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import agg
-import config_ygmap as config
+import config_usamy as config
 import pp
 import tools
 
