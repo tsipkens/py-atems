@@ -4,13 +4,16 @@
 """
 from dataclasses import dataclass
 from pathlib import Path
+import os
 import cv2
 import numpy as np
 from agg.microsam import (
     MicroSAM, _rgb, _detections, square_window, local_box, pad_box, box_area,
 )
 
-DEFAULT_CHECKPOINT = Path(__file__).parent / "config" / "MSAM_PP_V1.pt"
+BASE_DIR = Path(__file__).resolve().parent.parent
+MODEL_DIR = os.getenv("MODEL_DIR", BASE_DIR / "models")
+DEFAULT_CHECKPOINT = MODEL_DIR / "MicroSAM-pp" / "PyTorch" / "MSAM_PP_V1.pt"
 
 @dataclass(frozen=True)
 class PPOptions:
