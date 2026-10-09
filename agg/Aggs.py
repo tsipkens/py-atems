@@ -5,6 +5,7 @@ from matplotlib.patches import Circle
 
 from scipy import ndimage
 from scipy.spatial import ConvexHull
+from scipy.optimize import linear_sum_assignment
 from numpy.lib.stride_tricks import as_strided
 from skimage import measure, morphology
 from skimage.measure import regionprops_table
@@ -68,6 +69,129 @@ def box_counting(img_binary):
 
     coeffs = np.polyfit(np.log(np.array(box_sizes)), np.log(counts), 1)
     return float(-coeffs[0])
+
+
+def compute_iou_matrix(boxes_a, boxes_b):
+    """
+    Computes pairwise Intersection over Union (IoU) matrix.
+    boxes_a: (N, 4) array
+    boxes_b: (M, 4) array
+    """
+    boxes_a = np.asarray(boxes_a, dtype=np.float32)
+    boxes_b = np.asarray(boxes_b, dtype=np.float32)
+
+    if len(boxes_a) == 0 or len(boxes_b) == 0:
+        return np.zeros((len(boxes_a), len(boxes_b)))
+
+    # Ensure 2D shape (N, 4) and (M, 4)
+    if boxes_a.ndim == 1:
+        boxes_a = boxes_a.reshape(1, -1)
+    if boxes_b.ndim == 1:
+        boxes_b = boxes_b.reshape(1, -1)
+
+    # ------------------------------------------------------------
+    # FIX: Transpose boxes_b (M, 4) -> (4, M) BEFORE indexing or splitting
+    # ------------------------------------------------------------
+    x1_a, y1_a, x2_a, y2_a = boxes_a[:, 0:1], boxes_a[:, 1:2], boxes_a[:, 2:3], boxes_a[:, 3:4]
+    x1_b, y1_b, x2_b, y2_b = boxes_b.T[0:1], boxes_b.T[1:2], boxes_b.T[2:3], boxes_b.T[3:4]
+
+    # Compute intersection coordinates via broadcasting
+    inter_x1 = np.maximum(x1_a, x1_b)
+    inter_y1 = np.maximum(y1_a, y1_b)
+    inter_x2 = np.minimum(x2_a, x2_b)
+    inter_y2 = np.minimum(y2_a, y2_b)
+
+    inter_area = np.maximum(0, inter_x2 - inter_x1) * np.maximum(0, inter_y2 - inter_y1)
+
+    # Compute individual areas
+    area_a = (x2_a - x1_a) * (y2_a - y1_a)
+    area_b = (x2_b - x1_b) * (y2_b - y1_b)
+
+    # Compute IoU
+    union_area = area_a + area_b - inter_area
+    iou = inter_area / np.maximum(union_area, 1e-6)
+    return iou
+
+def match_detects_to_aggs(imgs_detect, aggs, iou_threshold=0.3):
+    """
+    Matches detected boxes in `imgs_detect` with bounding boxes stored in `aggs.df`
+    filtered by the 'img_id' column.
+
+    Parameters:
+    - imgs_detect: list of dicts (each entry has 'boxes', 'confidences', and optionally 'img_id').
+    - aggs: custom class instance containing `aggs.df` with columns ['img_id', 'bbox', ...].
+    - iou_threshold: float, threshold for matching.
+
+    Returns:
+    - matched_results: list of dicts with matching details per image entry.
+    """
+    df = aggs.df
+    aggs.df['class_name'] = None  # initialize
+
+    if 'img_id' not in df.columns:
+        raise ValueError("`aggs.df` does not contain an 'img_id' column.")
+
+    matched_results = []
+
+    for img_idx, entry in enumerate(imgs_detect):
+
+        # 1. Filter DataFrame rows corresponding to this img_id
+        df_subset = df[df['img_id'] == img_idx]
+
+        if not df_subset.empty:
+            raw_bboxes = np.array(df_subset['bbox'].tolist(), dtype=np.float32)
+            # Reorder columns: (r1, c1, r2, c2) -> (c1, r1, c2, r2)
+            target_bbox = raw_bboxes[:, [1, 0, 3, 2]]
+            df_indices = df_subset.index.to_numpy()
+        else:
+            target_bbox = np.empty((0, 4), dtype=np.float32)
+            df_indices = np.array([])
+
+        pred_boxes = entry.get('boxes', np.array([]))
+        confidences = entry.get('confidences', np.array([]))
+
+        # 2. Compute IoU matrix
+        iou_matrix = compute_iou_matrix(pred_boxes, target_bbox)
+
+        # 3. Optimal 1-to-1 Hungarian Matching
+        one_to_one_matches = []
+        if iou_matrix.size > 0:
+            cost_matrix = 1.0 - iou_matrix
+            pred_indices, target_indices = linear_sum_assignment(cost_matrix)
+
+            for p_idx, t_idx in zip(pred_indices, target_indices):
+                if iou_matrix[p_idx, t_idx] >= iou_threshold:
+                    one_to_one_matches.append({
+                        'pred_index': int(p_idx),
+                        'agg_df_index': int(df_indices[t_idx]),  # Exact index in aggs.df
+                        'iou': float(iou_matrix[p_idx, t_idx]),
+                        'confidence': float(confidences[p_idx]) if len(confidences) > p_idx else None
+                    })
+
+        # 4. Overlapping / Multi-Match Associations
+        overlap_matches = []
+        if iou_matrix.size > 0:
+            p_indices, t_indices = np.where(iou_matrix >= iou_threshold)
+            for p_idx, t_idx in zip(p_indices, t_indices):
+                overlap_matches.append({
+                    'pred_index': int(p_idx),
+                    'agg_df_index': int(df_indices[t_idx]),  # Exact index in aggs.df
+                    'iou': float(iou_matrix[p_idx, t_idx]),
+                    'confidence': float(confidences[p_idx]) if len(confidences) > p_idx else None
+                })
+
+        matched_results.append({
+            'img_id': img_idx,
+            'image_shape': entry.get('image_shape'),
+            'iou_matrix': iou_matrix,
+            'one_to_one_matches': one_to_one_matches,
+            'overlapping_matches': overlap_matches
+        })
+        
+        for match in one_to_one_matches:
+            aggs.df.loc[match['agg_df_index'], 'class_name'] = entry['class_names'][match['pred_index']]
+
+    return matched_results
 
 
 # =============================================================================

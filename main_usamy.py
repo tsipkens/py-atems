@@ -21,6 +21,5 @@ plt.show()
 
 imgs_binary_pp, particles, imgs_detect_pp = pp.seg_usamy(imgs, pixsizes, aggregate_masks=imgs_binary, yolo_opts=config.PP_YOLO, device=config.DEVICE, return_particles=True, return_detections=True, **config.YGMAP_PP,)
 
-
 if config.SHOW_RESULTS:
     tools.imshow_usamy_combined(imgs, imgs_binary, particles, pixsizes=pixsizes)
