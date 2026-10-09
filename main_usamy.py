@@ -19,4 +19,4 @@ imgs_binary_pp, particles, imgs_detect_pp = pp.seg_usamy(imgs, pixsizes, aggrega
 
 
 if config.SHOW_RESULTS:
-    tools.imshow_ygmap_combined(imgs, imgs_binary, particles, pixsizes=pixsizes)
+    tools.imshow_usamy_combined(imgs, imgs_binary, particles, pixsizes=pixsizes)
