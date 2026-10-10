@@ -112,7 +112,7 @@ def compute_iou_matrix(boxes_a, boxes_b):
     iou = inter_area / np.maximum(union_area, 1e-6)
     return iou
 
-def match_detects_to_aggs(imgs_detect, aggs, iou_threshold=0.3):
+def match_detects_to_aggs(imgs_detect, aggs, iou_threshold=0.5):
     """
     Matches detected boxes in `imgs_detect` with bounding boxes stored in `aggs.df`
     filtered by the 'img_id' column.
@@ -202,6 +202,7 @@ class Aggs:
     def __init__(self,
         imgs_binary, pixsizes, imgs=None, fnames=None,
         remove_edge_aggs=False, maxagg=50, min_size=10,
+        imgs_labeled=None
     ):
         """
         Parameters
@@ -251,6 +252,8 @@ class Aggs:
             self.fnames = list(fnames)
         else:
             self.fnames = [None] * n_imgs
+
+        self.imgs_labeled = imgs_labeled
 
         self.remove_edge_aggs = remove_edge_aggs
         self.maxagg = maxagg
@@ -316,9 +319,23 @@ class Aggs:
                 img_binary, min_size=self.min_size
             )
 
-            labeled_img, naggs = ndimage.label(img_binary)
-            if naggs == 0 or naggs > self.maxagg:
-                continue
+            if self.imgs_labeled is None:
+                structure = np.ones((3, 3), dtype=int)
+                labeled_img, naggs = ndimage.label(img_binary, structure=structure)
+                if naggs == 0 or naggs > self.maxagg:
+                    continue
+            else:
+                raw_img = self.imgs_labeled[img_idx]
+                unique_labels, contiguous_img = np.unique(raw_img, return_inverse=True)
+                
+                # Check for background (0)
+                has_bg = 0 in unique_labels
+                naggs = len(unique_labels) - (1 if has_bg else 0)
+                
+                if naggs == 0 or naggs > self.maxagg:
+                    continue
+                
+                labeled_img = contiguous_img.reshape(raw_img.shape)
 
             props_table = regionprops_table(
                 labeled_img,
@@ -636,10 +653,6 @@ class Aggs:
                 # Plot an 'x' at the CoM. 
                 plt.plot(agg['centroid'][1], agg['centroid'][0], 'xk', linewidth=0.75)
 
-                # Plot ID of the aggregate at CoM. 
-                if f_text:
-                    plt.text(agg['centroid'][1] + 20, agg['centroid'][0], str(agg['id']), color='black', size='small')
-                
                 # Plot Rg and da.
                 if f_diam:
                     plt.gca().add_patch(Circle((agg['centroid'][1], agg['centroid'][0]), agg['Rg'] / agg['pixsize'], 
@@ -657,6 +670,10 @@ class Aggs:
                     plt.gca().add_patch(Circle((agg['centroid'][1], agg['centroid'][0]), 
                                             agg['dp'] / 2 / agg['pixsize'], color=[0.92, 0.16, 0.49], fill=False, linewidth=0.5))
 
+                if 'class_name' in self.df.columns:
+                    plt.text(agg['centroid'][1] + 20, agg['centroid'][0], str(agg['id']) + "." + str(agg['class_name'])[0:3], color='black', size='x-small')
+                else:
+                    plt.text(agg['centroid'][1] + 20, agg['centroid'][0], str(agg['id']), color='black', size='small')
 
     def imshow1(self, idx=0, padding=50, dp_type=""):
         """Show a cropped and masked visualization of aggregate(s) with geometric annotations."""

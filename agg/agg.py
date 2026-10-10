@@ -486,9 +486,10 @@ def seg_usamy(imgs, pixsizes=None, imgs_detect=None, *,
     result = microsam.segment_usamy(imgs, imgs_detect, pixsizes, **kwargs)
     if return_detections:
         if kwargs.get("return_instances", False):
-            imgs_binary, records = result
-            return imgs_binary, records, imgs_detect
-        return result, imgs_detect
+            imgs_binary, records, imgs_labeled = result
+            return imgs_binary, records, imgs_detect, imgs_labeled
+        imgs_binary, imgs_labeled = result
+        return imgs_binary, imgs_detect, imgs_labeled
     return result
 
 

@@ -327,7 +327,7 @@ def segment_usamy(imgs, imgs_detect, pixsizes=None, *, checkpoint=None,
     if len(imgs_detect) != len(imgs):
         raise ValueError("imgs_detect must have one detection dictionary per image.")
     opts = _options(GuidedOptions, opts)
-    binaries, records = [], []
+    binaries, records, labels = [], [], []
 
     print('Processing with uSAM:')
     for image, detection in tqdm(zip(imgs, imgs_detect), total=len(imgs)):
@@ -341,6 +341,7 @@ def segment_usamy(imgs, imgs_detect, pixsizes=None, *, checkpoint=None,
         else:
             sizes = np.ones(len(boxes), dtype=np.int32)
         binary = np.zeros(shape, dtype=bool)
+        labeled = np.zeros(shape, dtype=bool)
         image_records = []
         if len(boxes):
             if segmenter is None:
@@ -349,6 +350,7 @@ def segment_usamy(imgs, imgs_detect, pixsizes=None, *, checkpoint=None,
         for box, score, class_id, size in zip(boxes, scores, classes, sizes):
             mask, sam_score, mode, status = _segment_aggregate(segmenter, rgb, box, opts)
             binary |= mask
+            labeled = labeled + mask * (np.max(labeled) + 1)
             if return_instances:
                 image_records.append({
                     "mask": mask, "box": box.copy(), "class_id": int(class_id),
@@ -357,10 +359,11 @@ def segment_usamy(imgs, imgs_detect, pixsizes=None, *, checkpoint=None,
                     "sam_window_mode": mode, "status": status,
                 })
         binaries.append(binary)
+        labels.append(labeled)
         records.append(image_records)
     print("DONE.\n")
 
-    return (binaries, records) if return_instances else binaries
+    return (binaries, records, labels) if return_instances else binaries, labels
 
 
 def segment_standalone(imgs, pixsizes=None, *, checkpoint=None, model_type="vit_b",

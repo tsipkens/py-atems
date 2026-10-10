@@ -399,7 +399,8 @@ def imshow_binary2(*args, **kwargs):
 #=========================================================================#
 def imshow_yolo(imgs:list, imgs_binary:list, detections:list,
                    pixsizes:list=None, idx:list=None, **kwargs):
-    """Display binary masks together with YOLO detection results.
+    """
+    Display binary masks together with YOLO detection results.
     """
 
     if len(imgs) != len(imgs_binary) or len(imgs) != len(detections):
@@ -453,7 +454,7 @@ def imshow_yolo(imgs:list, imgs_binary:list, detections:list,
             plt.subplot(N1, N2, ii + 1)
             plt.title(str(idx[ii]))
 
-        _ = imshow_binary(
+        _ = imshow_binary0(
             imgs[ii],
             imgs_binary[ii],
             pixsize=pixsizes[ii],
@@ -473,7 +474,7 @@ def imshow_yolo(imgs:list, imgs_binary:list, detections:list,
             ax.text(
                 x1,
                 max(0, y1 - 5),
-                f'{class_name} {confidence:.2f}',
+                f'{str(jj)} {class_name} {confidence:.2f}',
                 color=color,
                 fontsize=8,
                 fontweight='bold',

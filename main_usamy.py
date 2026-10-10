@@ -13,9 +13,9 @@ import tools
 # imgs, pixsizes, fns = tools.load_microscopy_images(IMAGE_FOLDER)
 imgs, pixsizes, fns = tools.load_imgs('images', detect=True)
 
-imgs_binary, imgs_detect = agg.seg_usamy(imgs, pixsizes, yolo_opts=config.YOLO, device=config.DEVICE, return_detections=True, **config.YGMAP,)
+imgs_binary, imgs_detect, imgs_labeled = agg.seg_usamy(imgs, pixsizes, yolo_opts=config.YOLO, device=config.DEVICE, return_detections=True, **config.YGMAP,)
 
-aggs = agg.Aggs.Aggs(imgs_binary, pixsizes,imgs)
+aggs = agg.Aggs.Aggs(imgs_binary, pixsizes, imgs, imgs_labeled=imgs_labeled)
 aggs.imshow1(24)
 plt.show()
 
